@@ -1,0 +1,8 @@
+{
+  "name": "Remix: Cove",
+  "description": "A professional Arabic-localized Android app for high-quality social media downloads, featuring a premium Material 3 design.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

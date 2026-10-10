@@ -1,0 +1,2270 @@
+package com.example
+
+import android.Manifest
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.os.Environment
+import android.provider.Settings
+import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
+import androidx.compose.animation.*
+import androidx.compose.animation.core.*
+import androidx.compose.foundation.*
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.*
+import androidx.compose.material.icons.rounded.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.core.content.pm.ShortcutInfoCompat
+import androidx.core.content.pm.ShortcutManagerCompat
+import androidx.core.graphics.drawable.IconCompat
+import coil.compose.AsyncImage
+import com.example.ui.theme.*
+import com.example.domain.*
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.regex.Pattern
+
+fun hasStoragePermission(context: Context): Boolean {
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        Environment.isExternalStorageManager()
+    } else {
+        ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.WRITE_EXTERNAL_STORAGE
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+}
+
+class MainActivity : ComponentActivity() {
+    private lateinit var downloadViewModel: DownloadViewModel
+    private lateinit var searchViewModel: SearchViewModel
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+
+        // Publish dynamic shortcuts for Direct Share Target integration
+        publishShareShortcuts()
+
+        setContent {
+            downloadViewModel = viewModel()
+            searchViewModel = viewModel()
+            
+            var showSplash by remember { mutableStateOf(true) }
+            
+            LaunchedEffect(Unit) {
+                kotlinx.coroutines.delay(2000) // 2.0 seconds delay for splash
+                showSplash = false
+            }
+
+            val permissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+                androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+            ) { _ -> }
+
+            LaunchedEffect(Unit) {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                    permissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                }
+            }
+            
+            // Handle initial intent
+            LaunchedEffect(intent) {
+                handleSharedIntent(intent)
+            }
+
+            CoveTheme {
+                // Enforce RTL layout direction for professional Arabic experience
+                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                    AnimatedContent(
+                        targetState = showSplash,
+                        transitionSpec = {
+                            fadeIn(animationSpec = tween(800, easing = LinearOutSlowInEasing)) togetherWith 
+                            fadeOut(animationSpec = tween(800, easing = FastOutSlowInEasing))
+                        },
+                        label = "SplashTransition"
+                    ) { isSplash ->
+                        if (isSplash) {
+                            SplashScreen()
+                        } else {
+                            Scaffold(
+                                modifier = Modifier.fillMaxSize(),
+                                containerColor = MaterialTheme.colorScheme.background
+                            ) { innerPadding ->
+                                MainScreen(
+                                    viewModel = downloadViewModel,
+                                    searchViewModel = searchViewModel,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleSharedIntent(intent)
+    }
+
+    private fun handleSharedIntent(intent: Intent?) {
+        if (intent?.getStringExtra("tab") == "HISTORY") {
+            if (::downloadViewModel.isInitialized) {
+                downloadViewModel.requestedTab = ScreenTab.HISTORY
+            }
+        }
+        if (intent?.action == Intent.ACTION_SEND && intent.type == "text/plain") {
+            val sharedText = intent.getStringExtra(Intent.EXTRA_TEXT)
+            if (!sharedText.isNullOrEmpty()) {
+                val url = extractUrl(sharedText)
+                if (url != null) {
+                    if (::downloadViewModel.isInitialized) {
+                        downloadViewModel.setUrl(url)
+                        downloadViewModel.fetchMedia()
+                        Toast.makeText(this, getString(R.string.share_success_alert), Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun extractUrl(text: String): String? {
+        val urlRegex = "https?://[\\w\\-]+(\\.[\\w\\-]+)+[/#?]?.*"
+        val pattern = Pattern.compile(urlRegex, Pattern.CASE_INSENSITIVE)
+        val matcher = pattern.matcher(text)
+        if (matcher.find()) {
+            return matcher.group()
+        }
+        return null
+    }
+
+    private fun publishShareShortcuts() {
+        try {
+            val shortcutInfoList = listOf(
+                ShortcutInfoCompat.Builder(this, "share_shortcut")
+                    .setShortLabel("تحميل وسائط")
+                    .setLongLabel("تحميل من إنستغرام وفيسبوك")
+                    .setIcon(IconCompat.createWithResource(this, R.mipmap.ic_launcher))
+                    .setCategories(setOf("com.example.category.TEXT_SHARE_TARGET"))
+                    .setIntent(Intent(this, ShareActivity::class.java).apply {
+                        action = Intent.ACTION_SEND
+                        type = "text/plain"
+                    })
+                    .setLongLived(true)
+                    .build()
+            )
+            ShortcutManagerCompat.addDynamicShortcuts(this, shortcutInfoList)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+}
+
+enum class ScreenTab {
+    DOWNLOAD, HISTORY, BROWSER
+}
+
+@Composable
+fun CoveBottomNavigation(
+    currentTab: ScreenTab,
+    onTabSelected: (ScreenTab) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .width(260.dp)
+            .padding(bottom = OmniGetDesignTokens.Space12)
+            .height(50.dp)
+            .glass(GlassMaterial.STRONG, RoundedCornerShape(9999.dp))
+            .padding(horizontal = 8.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Row(
+            modifier = Modifier.fillMaxSize(),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            val tabs = listOf(
+                ScreenTab.DOWNLOAD to Pair("بحث", Icons.Rounded.Search),
+                ScreenTab.BROWSER to Pair("تصفح", Icons.Rounded.Public),
+                ScreenTab.HISTORY to Pair("ملفاتي", Icons.Rounded.Folder)
+            )
+            
+            tabs.forEach { (tab, details) ->
+                val (label, icon) = details
+                val isSelected = currentTab == tab
+                
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(9999.dp))
+                        .clickable { onTabSelected(tab) }
+                        .then(
+                            if (isSelected) Modifier
+                                .background(Color.White.copy(alpha = 0.08f))
+                                .border(0.5.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(9999.dp))
+                            else Modifier
+                        )
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            imageVector = icon,
+                            contentDescription = label,
+                            tint = if (isSelected) OmniGetDesignTokens.Accent else OmniGetDesignTokens.TextSecondary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        if (isSelected) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = label,
+                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                color = OmniGetDesignTokens.Accent,
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun tabOrder(tab: ScreenTab): Int = when (tab) {
+    ScreenTab.DOWNLOAD -> 0
+    ScreenTab.BROWSER -> 1
+    ScreenTab.HISTORY -> 2
+}
+
+@Composable
+fun PopularSiteItem(
+    name: String,
+    color: Color,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onClick: () -> Unit
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .clickable { onClick() }
+            .padding(8.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(52.dp)
+                .clip(CircleShape)
+                .background(color),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = name,
+                tint = Color.White,
+                modifier = Modifier.size(24.dp)
+            )
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = name,
+            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
+            color = Color.White
+        )
+    }
+}
+
+@Composable
+fun StoragePermissionBanner(
+    hasPermission: Boolean,
+    onRequestPermission: () -> Unit
+) {
+    if (!hasPermission) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp),
+            shape = RoundedCornerShape(OmniGetDesignTokens.RadiusMd),
+            colors = CardDefaults.cardColors(
+                containerColor = OmniGetDesignTokens.Surface1
+            ),
+            border = BorderStroke(1.dp, OmniGetDesignTokens.Surface2)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Icon Box
+                Box(
+                    modifier = Modifier
+                        .size(42.dp)
+                        .clip(CircleShape)
+                        .background(OmniGetDesignTokens.Accent.copy(alpha = 0.12f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.FolderOpen,
+                        contentDescription = null,
+                        tint = OmniGetDesignTokens.Accent,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                
+                Spacer(modifier = Modifier.width(16.dp))
+                
+                // Texts
+                Column(
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(
+                        text = "مجلد مخصص للتنزيلات",
+                        style = MaterialTheme.typography.titleSmall.copy(
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp
+                        ),
+                        color = OmniGetDesignTokens.TextPrimary
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "احفظ ملفاتك بشكل منظم",
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontSize = 12.sp
+                        ),
+                        color = OmniGetDesignTokens.TextSecondary
+                    )
+                }
+                
+                Spacer(modifier = Modifier.width(12.dp))
+                
+                // Action Button
+                Button(
+                    onClick = onRequestPermission,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = OmniGetDesignTokens.Accent,
+                        contentColor = OmniGetDesignTokens.Surface0
+                    ),
+                    shape = CircleShape,
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 0.dp),
+                    modifier = Modifier.height(32.dp)
+                ) {
+                    Text(
+                        text = "تفعيل",
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalAnimationApi::class)
+@Composable
+fun MainScreen(viewModel: DownloadViewModel, searchViewModel: SearchViewModel, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val playerViewModel: PlayerViewModel = viewModel()
+    
+    var hasPermissionState by remember { mutableStateOf(hasStoragePermission(context)) }
+
+    val requestPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        hasPermissionState = hasStoragePermission(context)
+        com.example.api.NetworkModule.downloadRepository.scanDownloadedFiles()
+    }
+
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                hasPermissionState = hasStoragePermission(context)
+                com.example.api.NetworkModule.downloadRepository.scanDownloadedFiles()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    val requestStoragePermission = {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                    data = Uri.parse("package:${context.packageName}")
+                }
+                context.startActivity(intent)
+            } catch (e: Exception) {
+                try {
+                    val intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+                    context.startActivity(intent)
+                } catch (ex: Exception) {
+                    Toast.makeText(context, "لم نتمكن من فتح الإعدادات تلقائياً. يرجى تفعيلها يدوياً.", Toast.LENGTH_LONG).show()
+                }
+            }
+        } else {
+            requestPermissionLauncher.launch(
+                arrayOf(
+                    Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                    Manifest.permission.READ_EXTERNAL_STORAGE
+                )
+            )
+        }
+    }
+    val scrapingState by viewModel.scrapingState.collectAsState()
+    val downloads by viewModel.downloads.collectAsState()
+    var currentTab by remember { mutableStateOf(ScreenTab.DOWNLOAD) }
+    var showDownloadStartedDialog by remember { mutableStateOf(false) }
+    val showFullPlayer by playerViewModel.showFullPlayer.collectAsState()
+
+    val searchQuery by searchViewModel.query.collectAsState()
+    var fileSearchQuery by remember { mutableStateOf("") }
+    var selectedFileTab by remember { mutableStateOf("الكل") }
+
+    val searchResolveState by searchViewModel.resolveState.collectAsState()
+    val isReadyForDownload = searchResolveState is StreamResolveState.Ready && (searchResolveState as StreamResolveState.Ready).forDownload
+
+    LaunchedEffect(Unit) {
+        playerViewModel.initController(context)
+    }
+
+    LaunchedEffect(viewModel.requestedTab) {
+        viewModel.requestedTab?.let {
+            currentTab = it
+            viewModel.requestedTab = null
+        }
+    }
+
+    LaunchedEffect(currentTab) {
+        if (currentTab != ScreenTab.DOWNLOAD) {
+            searchViewModel.setSearching(false)
+        }
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(Color(0xFF000000))
+    ) {
+
+        AnimatedContent(
+            targetState = currentTab,
+            transitionSpec = {
+                val targetIndex = tabOrder(targetState)
+                val currentIndex = tabOrder(initialState)
+                if (targetIndex < currentIndex) {
+                    (slideInHorizontally { width -> -width } + fadeIn()) togetherWith
+                            (slideOutHorizontally { width -> width } + fadeOut())
+                } else {
+                    (slideInHorizontally { width -> width } + fadeIn()) togetherWith
+                            (slideOutHorizontally { width -> -width } + fadeOut())
+                }
+            },
+            label = "ScreenSwitch",
+            modifier = Modifier.fillMaxSize()
+        ) { tab ->
+                when (tab) {
+                    ScreenTab.DOWNLOAD -> {
+                        val isSearching by searchViewModel.isSearching.collectAsState()
+                        if (isSearching) {
+                            val focusManager = LocalFocusManager.current
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .background(Color.Transparent)
+                            ) {
+                                // 1. Top Search Header matching Screenshot 1
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 10.dp)
+                                        .padding(horizontal = 16.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    IconButton(
+                                        onClick = { searchViewModel.setSearching(false) }
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.ArrowBack,
+                                            contentDescription = "Back",
+                                            tint = Color.White
+                                        )
+                                    }
+
+                                    Spacer(modifier = Modifier.width(8.dp))
+
+                                    // Pill-shaped search box matching Screenshot 1
+                                    Row(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(46.dp)
+                                            .background(OmniGetDesignTokens.Surface2, RoundedCornerShape(OmniGetDesignTokens.Radius2Xl))
+                                            .border(0.5.dp, Color(0x14FFFFFF), RoundedCornerShape(OmniGetDesignTokens.Radius2Xl))
+                                            .padding(horizontal = OmniGetDesignTokens.Space12),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.Search,
+                                            contentDescription = null,
+                                            tint = OmniGetDesignTokens.TextSecondary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+
+                                        Spacer(modifier = Modifier.width(OmniGetDesignTokens.Space8))
+
+                                        // Actual input text field
+                                        val focusRequester = remember { FocusRequester() }
+                                        LaunchedEffect(Unit) {
+                                            focusRequester.requestFocus()
+                                        }
+
+                                        BasicTextField(
+                                            value = searchQuery,
+                                            onValueChange = { searchViewModel.onQueryChange(it) },
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .focusRequester(focusRequester),
+                                            textStyle = TextStyle(color = OmniGetDesignTokens.TextPrimary, fontSize = 14.sp),
+                                            cursorBrush = SolidColor(OmniGetDesignTokens.Accent),
+                                            singleLine = true,
+                                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                                            keyboardActions = KeyboardActions(onSearch = {
+                                                if (searchQuery.isNotBlank()) {
+                                                    searchViewModel.performSearch(searchQuery)
+                                                    focusManager.clearFocus()
+                                                }
+                                            }),
+                                            decorationBox = { innerTextField ->
+                                                if (searchQuery.isEmpty()) {
+                                                    Text(
+                                                        text = "بحث أو أدخل عنوان...",
+                                                        color = OmniGetDesignTokens.TextMuted,
+                                                        fontSize = 14.sp
+                                                    )
+                                                }
+                                                innerTextField()
+                                            }
+                                        )
+
+                                        if (searchQuery.isNotEmpty()) {
+                                            IconButton(
+                                                onClick = { searchViewModel.onQueryChange("", fetchAutocomplete = false) },
+                                                modifier = Modifier.size(24.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Rounded.Close,
+                                                    contentDescription = "Clear",
+                                                    tint = Color.White,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(16.dp))
+
+                                // 2. Main Search Body Content
+                                val suggestionsActive by searchViewModel.searchSuggestionsActive.collectAsState()
+                                val suggestionList by searchViewModel.suggestions.collectAsState()
+                                val searchState by searchViewModel.state.collectAsState()
+
+                                if (suggestionsActive && suggestionList.isNotEmpty()) {
+                                    // Suggestions view matching autocomplete specs
+                                    LazyColumn(
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentPadding = PaddingValues(bottom = 80.dp)
+                                    ) {
+                                        items(suggestionList) { suggestion ->
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clickable {
+                                                        searchViewModel.performSearch(suggestion)
+                                                        focusManager.clearFocus()
+                                                    }
+                                                    .padding(horizontal = 24.dp, vertical = 12.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Rounded.Search,
+                                                    contentDescription = null,
+                                                    tint = SilverZinc,
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(16.dp))
+                                                Text(
+                                                    text = suggestion,
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    color = Color.White
+                                                )
+                                            }
+                                            HorizontalDivider(
+                                                color = Color(0xFF1C1C1E),
+                                                modifier = Modifier.padding(horizontal = 24.dp)
+                                            )
+                                        }
+                                    }
+                                } else if (searchState is SearchUiState.Idle && searchQuery.isEmpty()) {
+                                    val searchHistory by searchViewModel.searchHistory.collectAsState()
+                                    
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .verticalScroll(rememberScrollState())
+                                            .padding(horizontal = 20.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 12.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = "سجل البحث",
+                                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                                color = OmniGetDesignTokens.TextPrimary
+                                            )
+                                            if (searchHistory.isNotEmpty()) {
+                                                Text(
+                                                    text = "مسح السجل",
+                                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                                                    color = OmniGetDesignTokens.Accent,
+                                                    modifier = Modifier
+                                                        .clip(RoundedCornerShape(4.dp))
+                                                        .clickable { searchViewModel.clearSearchHistory() }
+                                                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                                                )
+                                            }
+                                        }
+
+                                        if (searchHistory.isEmpty()) {
+                                            Column(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(vertical = 48.dp),
+                                                horizontalAlignment = Alignment.CenterHorizontally,
+                                                verticalArrangement = Arrangement.Center
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Rounded.History,
+                                                    contentDescription = null,
+                                                    tint = OmniGetDesignTokens.TextSecondary.copy(alpha = 0.4f),
+                                                    modifier = Modifier.size(64.dp)
+                                                )
+                                                Spacer(modifier = Modifier.height(16.dp))
+                                                Text(
+                                                    text = "لا توجد عمليات بحث سابقة",
+                                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                                                    color = OmniGetDesignTokens.TextSecondary
+                                                )
+                                                Spacer(modifier = Modifier.height(4.dp))
+                                                Text(
+                                                    text = "ابدأ بالبحث عن مقاطع الفيديو والمحتوى النافع المفضل لديك",
+                                                    style = MaterialTheme.typography.labelMedium,
+                                                    color = OmniGetDesignTokens.TextSecondary.copy(alpha = 0.7f),
+                                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                                )
+                                            }
+                                        } else {
+                                            searchHistory.forEach { historyQuery ->
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(vertical = 4.dp)
+                                                        .glass(GlassMaterial.REGULAR, RoundedCornerShape(12.dp))
+                                                        .clickable {
+                                                            searchViewModel.performSearch(historyQuery)
+                                                            focusManager.clearFocus()
+                                                        }
+                                                        .padding(horizontal = 16.dp, vertical = 12.dp)
+                                                ) {
+                                                    Row(
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.SpaceBetween
+                                                    ) {
+                                                        Row(
+                                                            verticalAlignment = Alignment.CenterVertically,
+                                                            modifier = Modifier.weight(1f)
+                                                        ) {
+                                                            Icon(
+                                                                imageVector = Icons.Rounded.History,
+                                                                contentDescription = null,
+                                                                tint = OmniGetDesignTokens.TextSecondary,
+                                                                modifier = Modifier.size(18.dp)
+                                                            )
+                                                            Spacer(modifier = Modifier.width(12.dp))
+                                                            Text(
+                                                                text = historyQuery,
+                                                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                                                                color = OmniGetDesignTokens.TextPrimary,
+                                                                maxLines = 1,
+                                                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                                            )
+                                                        }
+                                                        
+                                                        IconButton(
+                                                            onClick = { searchViewModel.removeSearchQueryFromHistory(historyQuery) },
+                                                            modifier = Modifier.size(24.dp)
+                                                        ) {
+                                                            Icon(
+                                                                imageVector = Icons.Rounded.Close,
+                                                                contentDescription = "حذف من السجل",
+                                                                tint = OmniGetDesignTokens.TextSecondary,
+                                                                modifier = Modifier.size(16.dp)
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    // Search results list screen (handled by SearchScreen component inside)
+                                    SearchScreen(viewModel = viewModel, searchViewModel = searchViewModel)
+                                }
+                            }
+                        } else {
+                            // Unfocused Default Home/Downloads Page
+                            LazyColumn(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .background(Color.Transparent),
+                                contentPadding = PaddingValues(bottom = 140.dp),
+                                verticalArrangement = Arrangement.spacedBy(0.dp)
+                            ) {
+                                // Header: Custom Premium Hero
+                                item {
+                                    HeaderSection()
+                                }
+
+                                // Search Input Box (Pill shaped)
+                                item {
+                                    Box(modifier = Modifier.padding(horizontal = 20.dp).padding(top = 16.dp)) {
+                                        InputSection(
+                                            url = viewModel.inputUrl,
+                                            onUrlChange = { viewModel.setUrl(it) },
+                                            onClear = { viewModel.clearUrl() },
+                                            onFetch = { viewModel.fetchMedia() },
+                                            scrapingState = scrapingState,
+                                            onFocus = { searchViewModel.setSearching(true) }
+                                        )
+                                    }
+                                }
+
+                                if (!hasPermissionState) {
+                                    item {
+                                        Box(modifier = Modifier.padding(horizontal = 20.dp).padding(top = 8.dp)) {
+                                            StoragePermissionBanner(
+                                                hasPermission = false,
+                                                onRequestPermission = requestStoragePermission
+                                            )
+                                        }
+                                    }
+                                }
+
+                                // Extraction Result Preview / Error Card
+                                item {
+                                    Box(modifier = Modifier.padding(horizontal = 20.dp).padding(top = 20.dp)) {
+                                        AnimatedContent(
+                                            targetState = scrapingState,
+                                            transitionSpec = {
+                                                fadeIn() + slideInVertically() togetherWith fadeOut() + slideOutVertically()
+                                            },
+                                            label = "ScrapingResult"
+                                        ) { state ->
+                                            when (state) {
+                                                is ScrapingState.Loading -> {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .padding(24.dp),
+                                                        contentAlignment = Alignment.Center
+                                                    ) {
+                                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                                            CircularProgressIndicator(color = AccentSkyBlue)
+                                                            Spacer(modifier = Modifier.height(12.dp))
+                                                            Text(
+                                                                text = stringResource(R.string.btn_fetching),
+                                                                style = MaterialTheme.typography.bodyMedium,
+                                                                color = SilverZinc
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                                is ScrapingState.Success -> {
+                                                    ScrapedMediaPreviewCard(
+                                                        media = state.media,
+                                                        onStartDownloads = { requests ->
+                                                            requests.forEach { req ->
+                                                                viewModel.downloadUrl(req.title, req.url, req.isVideo, req.isAudioOnly, req.thumbnailUrl)
+                                                            }
+                                                            showDownloadStartedDialog = true
+                                                        }
+                                                    )
+                                                }
+                                                is ScrapingState.Error -> {
+                                                    ErrorCard(message = state.message)
+                                                }
+                                                is ScrapingState.Idle -> {
+                                                    // Pure blackspace optimization for premium minimal feel
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    ScreenTab.BROWSER -> {
+                        BrowserScreen(
+                            viewModel = viewModel,
+                            modifier = Modifier.padding(bottom = 76.dp)
+                        )
+                    }
+                    ScreenTab.HISTORY -> {
+                        val storageDetails = remember {
+                            try {
+                                val stat = android.os.StatFs(android.os.Environment.getDataDirectory().path)
+                                val bytesAvailable = stat.blockSizeLong * stat.availableBlocksLong
+                                val totalBytes = stat.blockSizeLong * stat.blockCountLong
+                                val gbAvailable = bytesAvailable / (1024.0 * 1024.0 * 1024.0)
+                                val gbTotal = totalBytes / (1024.0 * 1024.0 * 1024.0)
+                                val usedPercent = ((totalBytes - bytesAvailable).toFloat() / totalBytes.toFloat()) * 100
+                                Triple(gbAvailable, gbTotal, usedPercent)
+                            } catch (e: Exception) {
+                                Triple(0.0, 0.0, 0f)
+                            }
+                        }
+
+                        val filteredDownloads = remember(downloads, selectedFileTab, fileSearchQuery) {
+                            downloads.filter { item ->
+                                val matchesCategory = when (selectedFileTab) {
+                                    "فيديو" -> item.isVideo
+                                    "صوت" -> !item.isVideo && (item.localUri?.endsWith(".m4a") == true || item.localUri?.endsWith(".mp3") == true || item.title.contains("(صوت)"))
+                                    "صور" -> item.localUri?.endsWith(".jpg") == true || item.localUri?.endsWith(".png") == true
+                                    else -> true
+                                }
+                                val matchesSearch = item.title.contains(fileSearchQuery, ignoreCase = true)
+                                matchesCategory && matchesSearch
+                            }
+                        }
+
+                        val downloadingList = filteredDownloads.filter { item ->
+                            val isCompleted = item.progress == 1f || item.statusText.contains("بنجاح")
+                            !isCompleted
+                        }
+
+                        val completedList = filteredDownloads.filter { item ->
+                            item.progress == 1f || item.statusText.contains("بنجاح")
+                        }
+
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color.Transparent),
+                            contentPadding = PaddingValues(
+                                start = 16.dp,
+                                end = 16.dp,
+                                bottom = 140.dp,
+                                top = 16.dp + WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+                            ),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            item {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 12.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column {
+                                        Text(
+                                            text = stringResource(R.string.title_history),
+                                            style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
+                                            color = Color.White
+                                        )
+                                        Text(
+                                            text = "إدارة وسائطك والتحكم بها من مكان واحد",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = OmniGetDesignTokens.TextSecondary
+                                        )
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .size(44.dp)
+                                            .clip(CircleShape)
+                                            .background(AccentSkyBlue.copy(alpha = 0.12f)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.FolderOpen,
+                                            contentDescription = null,
+                                            tint = AccentSkyBlue,
+                                            modifier = Modifier.size(24.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            item {
+                                if (storageDetails.first > 0.0) {
+                                    Card(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(bottom = 8.dp),
+                                        shape = RoundedCornerShape(16.dp),
+                                        colors = CardDefaults.cardColors(containerColor = OmniGetDesignTokens.Surface2),
+                                        border = BorderStroke(0.5.dp, Color(0x14FFFFFF))
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(14.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.Storage,
+                                                contentDescription = null,
+                                                tint = AccentSkyBlue,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.SpaceBetween
+                                                ) {
+                                                    Text(
+                                                        text = "مساحة الهاتف الداخلية",
+                                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                                        color = Color.White
+                                                    )
+                                                    Text(
+                                                        text = String.format("متوفر %.1f جيجا من %.1f جيجا", storageDetails.first, storageDetails.second),
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = OmniGetDesignTokens.TextSecondary
+                                                    )
+                                                }
+                                                Spacer(modifier = Modifier.height(6.dp))
+                                                LinearProgressIndicator(
+                                                    progress = { storageDetails.third / 100f },
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .height(5.dp)
+                                                        .clip(CircleShape),
+                                                    color = AccentSkyBlue,
+                                                    trackColor = Color(0x12FFFFFF)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (!hasPermissionState) {
+                                item {
+                                    StoragePermissionBanner(
+                                        hasPermission = false,
+                                        onRequestPermission = requestStoragePermission
+                                    )
+                                }
+                            }
+
+                            item {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(48.dp)
+                                        .background(OmniGetDesignTokens.Surface2, RoundedCornerShape(24.dp))
+                                        .border(0.5.dp, Color(0x14FFFFFF), RoundedCornerShape(24.dp))
+                                        .padding(horizontal = 16.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Search,
+                                        contentDescription = null,
+                                        tint = OmniGetDesignTokens.TextSecondary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    BasicTextField(
+                                        value = fileSearchQuery,
+                                        onValueChange = { fileSearchQuery = it },
+                                        modifier = Modifier.weight(1f),
+                                        textStyle = TextStyle(color = Color.White, fontSize = 14.sp),
+                                        cursorBrush = SolidColor(AccentSkyBlue),
+                                        singleLine = true,
+                                        decorationBox = { innerTextField ->
+                                            if (fileSearchQuery.isEmpty()) {
+                                                Text(
+                                                    text = "البحث في ملفاتك المحملة...",
+                                                    color = OmniGetDesignTokens.TextMuted,
+                                                    fontSize = 14.sp
+                                                )
+                                            }
+                                            innerTextField()
+                                        }
+                                    )
+                                    if (fileSearchQuery.isNotEmpty()) {
+                                        IconButton(
+                                            onClick = { fileSearchQuery = "" },
+                                            modifier = Modifier.size(24.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.Close,
+                                                contentDescription = "Clear",
+                                                tint = Color.White,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            item {
+                                val fileCategories = listOf(
+                                    "الكل" to Icons.Rounded.Category,
+                                    "فيديو" to Icons.Rounded.PlayCircle,
+                                    "صوت" to Icons.Rounded.MusicNote,
+                                    "صور" to Icons.Rounded.Image
+                                )
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 4.dp)
+                                        .horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    fileCategories.forEach { (catName, icon) ->
+                                        val isSelected = selectedFileTab == catName
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(20.dp))
+                                                .background(if (isSelected) AccentSkyBlue else OmniGetDesignTokens.Surface2)
+                                                .border(0.5.dp, if (isSelected) AccentSkyBlue else Color(0x14FFFFFF), RoundedCornerShape(20.dp))
+                                                .clickable { selectedFileTab = catName }
+                                                .padding(horizontal = 14.dp, vertical = 8.dp)
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.Center
+                                            ) {
+                                                Icon(
+                                                    imageVector = icon,
+                                                    contentDescription = null,
+                                                    tint = if (isSelected) OmniGetDesignTokens.Surface0 else Color.White,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Text(
+                                                    text = catName,
+                                                    color = if (isSelected) OmniGetDesignTokens.Surface0 else Color.White,
+                                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (filteredDownloads.isEmpty()) {
+                                item {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(top = 40.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        EmptyHistoryCard()
+                                    }
+                                }
+                            } else {
+                                if (downloadingList.isNotEmpty()) {
+                                    item {
+                                        Text(
+                                            text = "جاري تنزيلها الآن (${downloadingList.size})",
+                                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                                            color = AccentSkyBlue,
+                                            modifier = Modifier.padding(top = 8.dp)
+                                        )
+                                    }
+                                    items(downloadingList, key = { "downloading_${it.id}" }) { item ->
+                                        DownloadHistoryItemCard(
+                                            item = item,
+                                            context = context,
+                                            downloadViewModel = viewModel
+                                        )
+                                    }
+                                }
+
+                                if (completedList.isNotEmpty()) {
+                                    item {
+                                        Text(
+                                            text = "الملفات المكتملة (${completedList.size})",
+                                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                                            color = Color.White,
+                                            modifier = Modifier.padding(top = 8.dp)
+                                        )
+                                    }
+                                    items(completedList, key = { "completed_${it.id}" }) { item ->
+                                        DownloadHistoryItemCard(
+                                            item = item,
+                                            context = context,
+                                            downloadViewModel = viewModel
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+        // Beautiful glassmorphic bottom navigation docked floating at the bottom (hidden when download window is active)
+        if (!isReadyForDownload) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .navigationBarsPadding(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                MiniPlayer(
+                    viewModel = playerViewModel,
+                    onClick = { playerViewModel.setShowFullPlayer(true) }
+                )
+                
+                Spacer(modifier = Modifier.height(8.dp))
+
+                CoveBottomNavigation(
+                    currentTab = currentTab,
+                    onTabSelected = { currentTab = it }
+                )
+            }
+        }
+
+        if (showFullPlayer) {
+            FullPlayerScreen(
+                viewModel = playerViewModel,
+                downloadViewModel = viewModel,
+                onClose = { playerViewModel.setShowFullPlayer(false) }
+            )
+        }
+
+        // Ultra-polished compact started download overlay with fully rounded edges
+        if (showDownloadStartedDialog) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.65f))
+                    .clickable(enabled = true, onClick = {}, onClickLabel = null, role = null),
+                contentAlignment = Alignment.Center
+            ) {
+                Card(
+                    shape = RoundedCornerShape(32.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1c1c1e)),
+                    modifier = Modifier
+                        .width(280.dp)
+                        .padding(16.dp),
+                    border = BorderStroke(1.dp, Color(0x12FFFFFF))
+                ) {
+                    Column(
+                        modifier = Modifier.padding(20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        // Big fully rounded circle with white downward arrow in brand Sky Blue
+                        Box(
+                            modifier = Modifier
+                                .size(64.dp)
+                                .clip(CircleShape)
+                                .background(AccentSkyBlue),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ArrowDownward,
+                                contentDescription = null,
+                                tint = OmniGetDesignTokens.Surface0, // on-primary
+                                modifier = Modifier.size(32.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        Text(
+                            text = "بدأ التنزيل!",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = Color.White,
+                            textAlign = TextAlign.Center
+                        )
+
+                        Spacer(modifier = Modifier.height(20.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            // "عرض" (Show) - brand blue container, white text, fully rounded
+                            Button(
+                                onClick = {
+                                    showDownloadStartedDialog = false
+                                    currentTab = ScreenTab.HISTORY
+                                },
+                                shape = RoundedCornerShape(14.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = AccentSkyBlue,
+                                    contentColor = OmniGetDesignTokens.Surface0 // on-primary
+                                ),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(38.dp),
+                                contentPadding = PaddingValues(0.dp)
+                            ) {
+                                Text(
+                                    text = "عرض",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp
+                                )
+                            }
+
+                            // "ليس الآن" (Not now) - dark semi-trans background, white text, fully rounded
+                            Button(
+                                onClick = {
+                                    showDownloadStartedDialog = false
+                                },
+                                shape = RoundedCornerShape(14.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFF2c2c2e),
+                                    contentColor = Color.White
+                                ),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(38.dp),
+                                contentPadding = PaddingValues(0.dp)
+                            ) {
+                                Text(
+                                    text = "ليس الآن",
+                                    fontWeight = FontWeight.Medium,
+                                    fontSize = 13.sp
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun HeaderSection() {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(300.dp)
+    ) {
+        // Hero Background Image (New high-end generated artwork)
+        Image(
+            painter = painterResource(id = R.drawable.premium_dark_hero_1784150221018),
+            contentDescription = null,
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.Crop
+        )
+
+        // Glassmorphic / Ambient Dark Gradient Overlay
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            Color.Transparent,
+                            OledBlack.copy(alpha = 0.5f),
+                            OledBlack.copy(alpha = 0.9f),
+                            OledBlack
+                        )
+                    )
+                )
+        )
+
+        // Premium Typography and Branding
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = "Cove",
+                fontFamily = FontFamily.SansSerif,
+                fontSize = 38.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = (-1.5).sp,
+                color = OmniGetDesignTokens.TextPrimary
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "بوابتك لتنزيل وتشغيل الوسائط بأعلى دقة",
+                style = MaterialTheme.typography.bodySmall.copy(
+                    fontWeight = FontWeight.Medium,
+                    letterSpacing = 0.2.sp
+                ),
+                color = OmniGetDesignTokens.TextSecondary
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun InputSection(
+    url: String,
+    onUrlChange: (String) -> Unit,
+    onClear: () -> Unit,
+    onFetch: () -> Unit,
+    scrapingState: ScrapingState,
+    onFocus: () -> Unit = {}
+) {
+    val context = LocalContext.current
+    val clipboardManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    var isFocused by remember { mutableStateOf(false) }
+    val focusManager = LocalFocusManager.current
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(54.dp)
+            .glass(GlassMaterial.REGULAR, CircleShape)
+            .border(
+                width = if (isFocused) 1.dp else 0.5.dp,
+                color = if (isFocused) OmniGetDesignTokens.Accent else Color.Transparent,
+                shape = CircleShape
+            )
+            .padding(horizontal = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Clear or Paste button
+        if (url.isNotEmpty()) {
+            IconButton(
+                onClick = onClear
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Clear,
+                    contentDescription = "Clear",
+                    tint = OmniGetDesignTokens.TextMuted,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        } else {
+            IconButton(
+                onClick = {
+                    val clip = clipboardManager.primaryClip
+                    if (clip != null && clip.itemCount > 0) {
+                        val text = clip.getItemAt(0).text?.toString() ?: ""
+                        if (text.isNotEmpty()) {
+                            onUrlChange(text)
+                            Toast.makeText(context, "تم لصق الرابط من الحافظة", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.ContentPaste,
+                    contentDescription = "Paste",
+                    tint = OmniGetDesignTokens.TextSecondary,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
+
+        BasicTextField(
+            value = url,
+            onValueChange = onUrlChange,
+            modifier = Modifier
+                .weight(1f)
+                .onFocusChanged { 
+                    isFocused = it.isFocused 
+                    if (it.isFocused) {
+                        onFocus()
+                        focusManager.clearFocus()
+                    }
+                },
+            textStyle = MaterialTheme.typography.bodyMedium.copy(
+                color = OmniGetDesignTokens.TextPrimary,
+                textAlign = TextAlign.Center
+            ),
+            singleLine = true,
+            cursorBrush = SolidColor(OmniGetDesignTokens.Accent),
+            decorationBox = { innerTextField ->
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    if (url.isEmpty()) {
+                        Text(
+                            text = "أدخل رابط الوسائط أو ابحث للتنزيل...",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = OmniGetDesignTokens.TextMuted
+                        )
+                    }
+                    innerTextField()
+                }
+            }
+        )
+
+        // End side in RTL (Left in image): Download Action Button
+        IconButton(
+            onClick = {
+                if (url.isNotEmpty()) {
+                    onFetch()
+                    focusManager.clearFocus()
+                }
+            },
+            modifier = Modifier
+                .size(42.dp)
+                .clip(CircleShape)
+                .background(OmniGetDesignTokens.Accent)
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Search,
+                contentDescription = "Search",
+                tint = OmniGetDesignTokens.Surface0,
+                modifier = Modifier.size(22.dp)
+            )
+        }
+    }
+}
+
+@Composable
+fun ScrapedMediaPreviewCard(
+    media: ScrapedMedia,
+    onStartDownloads: (List<DownloadRequest>) -> Unit
+) {
+    val hasCarousel = media.items.size > 1
+
+    DoubleBezelCard(
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column {
+            // Header: Preview Title
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = stringResource(R.string.preview_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = OmniGetDesignTokens.TextPrimary
+                )
+
+                // Media type badge
+                val badgeText = if (hasCarousel) "ألبوم (${media.items.size})" else if (media.isVideo) stringResource(R.string.preview_video) else stringResource(R.string.preview_image)
+                PremiumBadge(text = badgeText)
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            if (hasCarousel) {
+                // Multi-item album carousel select grid
+                var selectedUrls by remember { mutableStateOf(media.items.map { it.url }.toSet()) }
+                val selectAll = selectedUrls.size == media.items.size
+
+                // Select All bar
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(OmniGetDesignTokens.RadiusSm))
+                        .background(OmniGetDesignTokens.Surface2)
+                        .clickable {
+                            selectedUrls = if (selectAll) {
+                                emptySet()
+                            } else {
+                                media.items.map { it.url }.toSet()
+                            }
+                        }
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "تحديد الكل",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                        color = OmniGetDesignTokens.TextPrimary
+                    )
+                    Box(
+                        modifier = Modifier
+                            .size(22.dp)
+                            .clip(CircleShape)
+                            .background(if (selectAll) OmniGetDesignTokens.Accent else Color.Transparent)
+                            .border(1.5.dp, if (selectAll) OmniGetDesignTokens.Accent else OmniGetDesignTokens.TextMuted, CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (selectAll) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = null,
+                                tint = Color.Black,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Items list
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    val chunkedItems = media.items.chunked(3)
+                    chunkedItems.forEach { rowItems ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            rowItems.forEach { item ->
+                                val isSelected = selectedUrls.contains(item.url)
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .aspectRatio(1f)
+                                        .clip(RoundedCornerShape(OmniGetDesignTokens.RadiusSm))
+                                        .background(OmniGetDesignTokens.Surface2)
+                                        .border(
+                                            width = 1.dp,
+                                            color = if (isSelected) OmniGetDesignTokens.Accent else Color(0x12FFFFFF),
+                                            shape = RoundedCornerShape(OmniGetDesignTokens.RadiusSm)
+                                        )
+                                        .clickable {
+                                            selectedUrls = if (isSelected) {
+                                                selectedUrls - item.url
+                                            } else {
+                                                selectedUrls + item.url
+                                            }
+                                        }
+                                ) {
+                                    if (item.thumbnailUrl != null) {
+                                        AsyncImage(
+                                            model = item.thumbnailUrl,
+                                            contentDescription = null,
+                                            modifier = Modifier.fillMaxSize(),
+                                            contentScale = ContentScale.Crop
+                                        )
+                                    } else {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .background(Color.White.copy(alpha = 0.04f)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = if (item.isVideo) Icons.Default.PlayCircleFilled else Icons.Default.Image,
+                                                contentDescription = null,
+                                                tint = OmniGetDesignTokens.TextSecondary,
+                                                modifier = Modifier.size(32.dp)
+                                            )
+                                        }
+                                    }
+
+                                    // Selection checkbox top right
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.TopEnd)
+                                            .padding(8.dp)
+                                            .size(20.dp)
+                                            .clip(CircleShape)
+                                            .background(if (isSelected) OmniGetDesignTokens.Accent else Color.Black.copy(alpha = 0.5f))
+                                            .border(1.5.dp, if (isSelected) OmniGetDesignTokens.Accent else Color.White.copy(alpha = 0.5f), CircleShape),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        if (isSelected) {
+                                            Icon(
+                                                imageVector = Icons.Default.Check,
+                                                contentDescription = null,
+                                                tint = Color.Black,
+                                                modifier = Modifier.size(12.dp)
+                                            )
+                                        }
+                                    }
+
+                                    // Video indicator bottom left
+                                    if (item.isVideo) {
+                                        Box(
+                                            modifier = Modifier
+                                                .align(Alignment.BottomStart)
+                                                .padding(8.dp)
+                                                .size(22.dp)
+                                                .background(Color.Black.copy(alpha = 0.6f), CircleShape),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.PlayArrow,
+                                                contentDescription = null,
+                                                tint = Color.White,
+                                                modifier = Modifier.size(12.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            val emptySpaces = 3 - rowItems.size
+                            if (emptySpaces > 0) {
+                                repeat(emptySpaces) {
+                                    Spacer(modifier = Modifier.weight(1f))
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                // Download Button for Carousel selection (Custom premium button)
+                PremiumButton(
+                    text = "تنزيل المحدّد (${selectedUrls.size})",
+                    onClick = {
+                        if (selectedUrls.isNotEmpty()) {
+                            val requests = media.items.filter { selectedUrls.contains(it.url) }.mapIndexed { idx, item ->
+                                DownloadRequest(
+                                    title = "${media.title} (جزء ${idx + 1})",
+                                    url = item.url,
+                                    isVideo = item.isVideo,
+                                    isAudioOnly = false,
+                                    thumbnailUrl = item.thumbnailUrl.ifEmpty { media.thumbnailUrl }
+                                )
+                            }
+                            onStartDownloads(requests)
+                        }
+                    },
+                    enabled = selectedUrls.isNotEmpty(),
+                    modifier = Modifier.fillMaxWidth(),
+                    icon = Icons.Default.Download
+                )
+            } else {
+                // Single Item format selector
+                val isVideo = media.isVideo
+                var selectedFormat by remember { mutableStateOf(if (isVideo) "mp4" else "image") }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(72.dp)
+                            .clip(RoundedCornerShape(OmniGetDesignTokens.RadiusSm))
+                            .border(0.5.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(OmniGetDesignTokens.RadiusSm))
+                            .background(Color.Black.copy(alpha = 0.3f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (media.thumbnailUrl != null) {
+                            AsyncImage(
+                                model = media.thumbnailUrl,
+                                contentDescription = media.title,
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Crop
+                            )
+                        } else {
+                            Icon(
+                                imageVector = if (media.isVideo) Icons.Default.PlayCircle else Icons.Default.Image,
+                                contentDescription = null,
+                                tint = OmniGetDesignTokens.Accent,
+                                modifier = Modifier.size(32.dp)
+                            )
+                        }
+
+                        if (media.isVideo) {
+                            Icon(
+                                imageVector = Icons.Default.PlayArrow,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier
+                                    .size(24.dp)
+                                    .background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                                    .padding(2.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.width(16.dp))
+
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            text = media.title,
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                            color = OmniGetDesignTokens.TextPrimary,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = media.sourceUrl,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = OmniGetDesignTokens.TextSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                if (isVideo) {
+                    Text(
+                        text = "خيارات التحميل:",
+                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                        color = OmniGetDesignTokens.TextSecondary,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+
+                    FormatRow(
+                        title = "فيديو MP4 عالي الجودة",
+                        isSelected = selectedFormat == "mp4",
+                        icon = Icons.Default.PlayCircle,
+                        onClick = { selectedFormat = "mp4" }
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    FormatRow(
+                        title = "صوت فقط MP3",
+                        isSelected = selectedFormat == "mp3",
+                        icon = Icons.Default.MusicNote,
+                        onClick = { selectedFormat = "mp3" }
+                    )
+                } else {
+                    Text(
+                        text = "الصور:",
+                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                        color = OmniGetDesignTokens.TextSecondary,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+
+                    FormatRow(
+                        title = "تحميل الصورة بدقة كاملة",
+                        isSelected = selectedFormat == "image",
+                        icon = Icons.Default.Image,
+                        onClick = { selectedFormat = "image" }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                // Download Action Button (Custom premium button)
+                PremiumButton(
+                    text = "تنزيل الآن",
+                    onClick = {
+                        val isAudioOnly = selectedFormat == "mp3"
+                        val req = DownloadRequest(
+                            title = media.title,
+                            url = media.mediaUrl,
+                            isVideo = isVideo && !isAudioOnly,
+                            isAudioOnly = isAudioOnly,
+                            thumbnailUrl = media.thumbnailUrl
+                        )
+                        onStartDownloads(listOf(req))
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    icon = Icons.Default.Download
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun ErrorCard(message: String) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color(0xFF3a1417), RoundedCornerShape(16.dp))
+            .border(1.dp, Color(0x12FFFFFF), RoundedCornerShape(16.dp))
+            .padding(16.dp)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Error,
+                contentDescription = null,
+                tint = Color(0xFFff453a),
+                modifier = Modifier.size(28.dp)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color(0xFFffb4ab)
+            )
+        }
+    }
+}
+
+@Composable
+fun EmptyHistoryCard() {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Icon(
+            imageVector = Icons.Outlined.FolderZip,
+            contentDescription = null,
+            tint = SilverZinc.copy(alpha = 0.5f),
+            modifier = Modifier.size(64.dp)
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        Text(
+            text = stringResource(R.string.empty_history),
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = FontWeight.Bold,
+            color = Color.White
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = stringResource(R.string.empty_history_desc),
+            style = MaterialTheme.typography.bodySmall,
+            color = SilverZinc,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 24.dp)
+        )
+    }
+}
+
+@Composable
+fun DownloadHistoryItemCard(
+    item: DownloadItem, 
+    context: Context,
+    downloadViewModel: DownloadViewModel = viewModel(),
+    playerViewModel: PlayerViewModel = viewModel()
+) {
+    val isCompleted = item.progress == 1f || item.statusText.contains("بنجاح")
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+    val downloads by downloadViewModel.downloads.collectAsState()
+    val mediaThumb = rememberMediaThumbnail(item.localUri)
+
+    // Read real file size
+    val fileSizeText = remember(item.localUri, isCompleted) {
+        if (item.localUri != null) {
+            val file = File(item.localUri)
+            if (file.exists()) {
+                val bytes = file.length()
+                if (bytes > 0) {
+                    val mb = bytes / (1024.0 * 1024.0)
+                    if (mb >= 1.0) {
+                        String.format("%.1f MB", mb)
+                    } else {
+                        val kb = bytes / 1024.0
+                        String.format("%.1f KB", kb)
+                    }
+                } else "غير معروف"
+            } else {
+                if (isCompleted) "محذوف" else "جاري التحضير"
+            }
+        } else {
+            "قيد التحميل"
+        }
+    }
+
+    // Determine format badge details
+    val (formatText, badgeColor) = remember(item.localUri, item.isVideo) {
+        if (item.isVideo) {
+            Pair("MP4", OmniGetDesignTokens.Accent)
+        } else {
+            if (item.localUri?.endsWith(".jpg", true) == true || item.localUri?.endsWith(".png", true) == true) {
+                Pair("JPG", OmniGetDesignTokens.TextSecondary)
+            } else {
+                Pair("MP3", OmniGetDesignTokens.Accent)
+            }
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .glass(GlassMaterial.REGULAR, RoundedCornerShape(16.dp))
+            .clickable {
+                if (isCompleted && item.localUri != null && File(item.localUri).exists()) {
+                    if (item.isVideo || formatText == "MP3") {
+                        val completedList = downloads.filter { 
+                            val isItemCompleted = it.progress == 1f || it.statusText.contains("بنجاح")
+                            val isAudio = it.localUri?.endsWith(".mp3", true) == true || it.localUri?.endsWith(".m4a", true) == true
+                            isItemCompleted && (it.isVideo || isAudio)
+                        }
+                        
+                        val queue = completedList.map { c ->
+                            val isAudio = c.localUri?.endsWith(".mp3", true) == true || c.localUri?.endsWith(".m4a", true) == true
+                            PlayableItem(
+                                id = c.id.toString(),
+                                title = c.title,
+                                artist = if (isAudio) "موسيقى Cove" else "فيديو Cove",
+                                url = c.localUri ?: "",
+                                thumbnailUrl = c.localUri ?: "",
+                                isLocal = true
+                            )
+                        }
+                        
+                        val index = completedList.indexOfFirst { it.id == item.id }
+                        playerViewModel.playQueueItem(
+                            PlayableItem(
+                                id = item.id.toString(),
+                                title = item.title,
+                                artist = if (formatText == "MP3") "موسيقى Cove" else "فيديو Cove",
+                                url = item.localUri ?: "",
+                                thumbnailUrl = item.localUri ?: "",
+                                isLocal = true
+                            ),
+                            queue,
+                            if (index != -1) index else 0
+                        )
+                        playerViewModel.setShowFullPlayer(true)
+                    } else {
+                        try {
+                            val intent = Intent(Intent.ACTION_VIEW).apply {
+                                setDataAndType(Uri.parse(item.localUri), "image/*")
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                            context.startActivity(intent)
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "لا يوجد تطبيق لعرض الصور", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // 1. Sleek Compact Thumbnail with Type Indicator
+                Box(
+                    modifier = Modifier
+                        .size(52.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(badgeColor.copy(alpha = 0.12f))
+                        .border(0.5.dp, Color(0x14FFFFFF), RoundedCornerShape(10.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    val thumbModel = mediaThumb ?: item.thumbnailUrl
+                    if (thumbModel != null) {
+                        AsyncImage(
+                            model = thumbModel,
+                            contentDescription = item.title,
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop,
+                            error = painterResource(id = android.R.drawable.ic_media_play)
+                        )
+                    } else {
+                        Icon(
+                            imageVector = if (item.isVideo) Icons.Rounded.PlayCircleOutline else (if (formatText == "JPG") Icons.Rounded.Image else Icons.Rounded.MusicNote),
+                            contentDescription = null,
+                            tint = badgeColor,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    // Bottom-right play overlay on the thumbnail
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(2.dp)
+                            .size(14.dp)
+                            .clip(CircleShape)
+                            .background(Color.Black.copy(alpha = 0.65f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (item.isVideo) Icons.Rounded.PlayArrow else (if (formatText == "JPG") Icons.Rounded.Image else Icons.Rounded.MusicNote),
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(8.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(10.dp))
+
+                // 2. Clean Typography and Meta Information
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Text(
+                        text = item.title,
+                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                        color = OmniGetDesignTokens.TextPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    
+                    Spacer(modifier = Modifier.height(4.dp))
+                    
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        // Extension Badge
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(badgeColor.copy(alpha = 0.15f))
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = formatText,
+                                color = badgeColor,
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 9.sp)
+                            )
+                        }
+
+                        // Size and Date joined as a single non-wrapping block
+                        val sdf = remember { SimpleDateFormat("yyyy/MM/dd", Locale.getDefault()) }
+                        val formattedDate = remember(item.timestamp) { sdf.format(Date(item.timestamp)) }
+                        val metaText = remember(fileSizeText, formattedDate) {
+                            if (isCompleted) {
+                                "$fileSizeText  •  $formattedDate"
+                            } else {
+                                fileSizeText
+                            }
+                        }
+                        Text(
+                            text = metaText,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = OmniGetDesignTokens.TextSecondary,
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                // 3. Compact Actions: Share and Delete (Play is handled via clicking the card)
+                val isFailed = item.statusText.contains("فشل")
+                if ((isCompleted && item.localUri != null && File(item.localUri).exists()) || isFailed) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        if (!isFailed) {
+                            // Share
+                            IconButton(
+                                onClick = {
+                                    try {
+                                        val intent = Intent(Intent.ACTION_SEND).apply {
+                                            type = if (item.isVideo) "video/*" else (if (formatText == "JPG") "image/*" else "audio/*")
+                                            putExtra(Intent.EXTRA_STREAM, Uri.parse(item.localUri))
+                                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                        }
+                                        val chooser = Intent.createChooser(intent, "مشاركة الملف")
+                                        chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        context.startActivity(chooser)
+                                    } catch (e: Exception) {
+                                        Toast.makeText(context, "فشلت مشاركة الملف", Toast.LENGTH_SHORT).show()
+                                    }
+                                },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Share,
+                                    contentDescription = "Share",
+                                    tint = OmniGetDesignTokens.TextPrimary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+
+                        // Delete
+                        IconButton(
+                            onClick = { 
+                                if (isFailed) {
+                                    // Delete directly without confirmation for failed items to keep experience slick
+                                    downloadViewModel.deleteDownload(item.id)
+                                } else {
+                                    showDeleteConfirm = true 
+                                }
+                            },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Delete,
+                                contentDescription = "Delete",
+                                tint = OmniGetDesignTokens.TextMuted,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Real-Time Download Progress Indicator for active downloads
+            if (item.progress >= 0f && item.progress < 1.0f && !isCompleted && !item.statusText.contains("فشل")) {
+                Spacer(modifier = Modifier.height(8.dp))
+                LinearProgressIndicator(
+                    progress = { item.progress },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(3.dp)
+                        .clip(CircleShape),
+                    color = OmniGetDesignTokens.Accent,
+                    trackColor = OmniGetDesignTokens.Surface2
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = item.statusText,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = OmniGetDesignTokens.TextSecondary,
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "${(item.progress * 100).toInt()}%",
+                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                        color = OmniGetDesignTokens.Accent,
+                        fontSize = 11.sp
+                    )
+                }
+            } else if (item.progress == -1f && !isCompleted) {
+                Spacer(modifier = Modifier.height(8.dp))
+                LinearProgressIndicator(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(3.dp)
+                        .clip(CircleShape),
+                    color = OmniGetDesignTokens.Accent,
+                    trackColor = OmniGetDesignTokens.Surface2
+                )
+            } else if (item.statusText.contains("فشل")) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = item.statusText,
+                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                    color = OmniGetDesignTokens.DangerText,
+                    fontSize = 11.sp
+                )
+            }
+        }
+    }
+
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = {
+                Text(
+                    text = "حذف الملف نهائياً؟",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    color = OmniGetDesignTokens.TextPrimary
+                )
+            },
+            text = {
+                Text(
+                    text = "سيؤدي هذا إلى حذف الملف من جهازك بشكل نهائي ولا يمكن التراجع عن هذا الإجراء.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = OmniGetDesignTokens.TextSecondary
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        downloadViewModel.deleteDownload(item.id)
+                        showDeleteConfirm = false
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = OmniGetDesignTokens.DangerBg,
+                        contentColor = OmniGetDesignTokens.DangerText
+                    ),
+                    shape = RoundedCornerShape(OmniGetDesignTokens.RadiusSm),
+                    border = BorderStroke(1.dp, OmniGetDesignTokens.DangerText.copy(alpha = 0.2f))
+                ) {
+                    Text(text = "حذف", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) {
+                    Text(text = "إلغاء", color = OmniGetDesignTokens.TextPrimary)
+                }
+            },
+            containerColor = OmniGetDesignTokens.Surface1,
+            shape = RoundedCornerShape(OmniGetDesignTokens.RadiusLg),
+            modifier = Modifier.border(1.dp, Color(0x12FFFFFF), RoundedCornerShape(OmniGetDesignTokens.RadiusLg))
+        )
+    }
+}
+

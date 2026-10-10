@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="72dp"
+    android:background="#1C1B1B"
+    android:padding="10dp">
+
+    <!-- Thumbnail ImageView with rounded corners -->
+    <ImageView
+        android:id="@+id/notification_thumbnail"
+        android:layout_width="52dp"
+        android:layout_height="52dp"
+        android:layout_alignParentStart="true"
+        android:layout_centerVertical="true"
+        android:layout_marginStart="6dp"
+        android:scaleType="centerCrop"
+        android:src="@drawable/ic_launcher_foreground" />
+
+    <!-- Far Right green checkmark circle -->
+    <ImageView
+        android:id="@+id/notification_status_icon"
+        android:layout_width="24dp"
+        android:layout_height="24dp"
+        android:layout_alignParentEnd="true"
+        android:layout_centerVertical="true"
+        android:layout_marginEnd="10dp"
+        android:src="@drawable/ic_green_check_circle" />
+
+    <!-- Content column -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_toEndOf="@id/notification_thumbnail"
+        android:layout_toStartOf="@id/notification_status_icon"
+        android:layout_centerVertical="true"
+        android:layout_marginStart="12dp"
+        android:layout_marginEnd="12dp"
+        android:orientation="vertical">
+
+        <!-- Title -->
+        <TextView
+            android:id="@+id/notification_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="How to create a glass effect in Figma ..."
+            android:textColor="#E5E2E1"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <!-- Sub Row -->
+        <RelativeLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp">
+
+            <!-- Timestamp -->
+            <TextView
+                android:id="@+id/notification_time"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_alignParentStart="true"
+                android:text="10:39"
+                android:textColor="#8E9192"
+                android:textSize="11sp" />
+
+            <!-- Subtext -->
+            <TextView
+                android:id="@+id/notification_subtext"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_alignParentEnd="true"
+                android:text="اكتمل التنزيل، انقر للتحقق"
+                android:textColor="#C4C7C8"
+                android:textSize="11sp" />
+        </RelativeLayout>
+    </LinearLayout>
+
+</RelativeLayout>
