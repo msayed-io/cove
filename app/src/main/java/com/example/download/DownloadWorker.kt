@@ -92,6 +92,10 @@ class DownloadWorker(
         var thumbnailPath: String? = pending.localUri?.takeIf { it.endsWith(".thumb.jpg") }
         var lastNotificationAt = 0L
 
+        // Set to true as soon as the work reaches a terminal state inside doWork(); a stopped
+        // worker (user cancel or system preemption) leaves it false so the cleanup below runs.
+        var reachedTerminalState = false
+
         return try {
             val completed = repository.downloadUrl(
                 context = applicationContext,
@@ -146,6 +150,7 @@ class DownloadWorker(
                 title = completed.title,
                 localUriString = completed.localUri
             )
+            reachedTerminalState = true
             Result.success()
         } catch (e: CancellationException) {
             // The work was stopped (user cancel / system preemption): never report a failure here,
@@ -153,6 +158,7 @@ class DownloadWorker(
             throw e
         } catch (e: DownloadRepository.DownloadException) {
             // The engine already classified the failure (transient vs permanent).
+            reachedTerminalState = true
             handleFailure(
                 message = e.message ?: "فشل التحميل",
                 retryable = e.retryable,
@@ -162,6 +168,7 @@ class DownloadWorker(
                 repository = repository
             )
         } catch (e: Exception) {
+            reachedTerminalState = true
             handleFailure(
                 message = e.message ?: "خطأ غير متوقع",
                 retryable = true,
@@ -170,31 +177,30 @@ class DownloadWorker(
                 thumbnailPath = thumbnailPath,
                 repository = repository
             )
+        } finally {
+            // `CoroutineWorker.onStopped()` is final, so the stop cleanup lives here: this branch
+            // runs when doWork was cancelled (user cancel / system preemption) without reaching
+            // any terminal state above.
+            if (!reachedTerminalState) {
+                releaseAfterStop(downloadId, repository)
+            }
         }
     }
 
     /**
-     * Called when the work is stopped (explicit cancel or system preemption).
+     * Runs when the work is stopped before finishing (explicit cancel or system preemption).
      * Releases the underlying network resources so nothing keeps running in the dark.
      */
-    override fun onStopped() {
-        super.onStopped()
+    private fun releaseAfterStop(downloadId: Long, repository: DownloadRepository) {
         try {
-            val downloadId = inputData.getLong(KEY_DOWNLOAD_ID, -1L)
-            if (downloadId <= 0L) return
-
-            val repository = NetworkModule.downloadRepository
             repository.stopActiveNetworkTask(downloadId)
-
-            if (repository.isCancelledByUser(downloadId)) {
-                DownloadNotifications.cancelProgress(applicationContext, downloadId)
-                return
-            }
-
-            // Preempted by the system (e.g. connectivity lost): the item is paused and
-            // WorkManager will re-run this worker once the constraints are satisfied again.
-            repository.markDownloadStatus(downloadId, "إيقاف مؤقت — سيستأنف التنزيل تلقائياً...")
             DownloadNotifications.cancelProgress(applicationContext, downloadId)
+
+            // A user cancel already wrote its final status; a system preemption is a pause that
+            // WorkManager resumes once the constraints are satisfied again.
+            if (!repository.isCancelledByUser(downloadId)) {
+                repository.markDownloadStatus(downloadId, "إيقاف مؤقت — سيستأنف التنزيل تلقائياً...")
+            }
         } catch (t: Throwable) {
             Log.w(TAG, "Cleanup after stop failed", t)
         }

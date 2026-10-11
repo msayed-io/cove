@@ -8,6 +8,9 @@ import com.example.domain.DownloadTelemetry
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLRequest
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -935,81 +938,96 @@ class DownloadRepository {
         var speed = -1L
         var lastEta = -1L
 
-        try {
-            YoutubeDL.getInstance().execute(request, downloadId.toString()) { progress, eta, line ->
-                val now = System.currentTimeMillis()
+        // The yt-dlp progress callback is a plain (non-suspending) lambda, so telemetry is
+        // handed over through a conflated channel and emitted from an actual coroutine.
+        val telemetryChannel = Channel<DownloadTelemetry>(Channel.CONFLATED)
 
-                // yt-dlp prints the live speed inside the progress line:
-                // "[download]  45.2% of 120.00MiB at 2.35MiB/s ETA 00:32"
-                val parsedSpeed = parseSpeedFromLine(line)
-                if (parsedSpeed > 0L) {
-                    speed = parsedSpeed
-                } else {
-                    val sampleElapsed = now - lastSizeSampleAt
-                    if (sampleElapsed >= 1000L) {
-                        val size = currentOutputSize(outputFile)
-                        if (size >= lastSizeSample) {
-                            speed = ((size - lastSizeSample) * 1000L) / sampleElapsed
-                        }
-                        lastSizeSample = size
-                        lastSizeSampleAt = now
-                    }
-                }
-                if (eta > 0L) {
-                    lastEta = eta
-                }
-
-                if (now - lastProgressUpdate > 200) {
-                    lastProgressUpdate = now
-                    val p = progress / 100f
-                    val normalized = if (p < 0f) 0f else p
-                    val bytesSoFar = currentOutputSize(outputFile).takeIf { it > 0L } ?: -1L
-
-                    updateItem(downloadId) {
-                        it.copy(
-                            progress = normalized,
-                            statusText = "جاري التحميل...",
-                            bytesDownloaded = bytesSoFar,
-                            speedBytesPerSec = speed,
-                            etaSeconds = lastEta
+        coroutineScope {
+            val telemetryCollector = launch {
+                for (telemetry in telemetryChannel) {
+                    updateItem(downloadId) { item ->
+                        item.copy(
+                            progress = telemetry.progress,
+                            statusText = telemetry.statusText,
+                            bytesDownloaded = telemetry.bytesDownloaded,
+                            speedBytesPerSec = telemetry.speedBytesPerSec,
+                            etaSeconds = telemetry.etaSeconds
                         )
                     }
-                    emitTelemetry(
-                        onTelemetry,
-                        DownloadTelemetry(
-                            progress = normalized,
-                            bytesDownloaded = bytesSoFar,
-                            speedBytesPerSec = speed,
-                            etaSeconds = lastEta,
-                            statusText = "جاري التحميل..."
-                        )
-                    )
+                    emitTelemetry(onTelemetry, telemetry)
                 }
             }
-        } catch (ytdlErr: Exception) {
-            Log.w("DownloadRepository", "YoutubeDL execute failed: ${ytdlErr.message}. Attempting fallback direct stream download...")
 
-            val emergencyUrl = resolveDirectUrl(context, originalUrl, isVideo, isAudioOnly)
-            if (emergencyUrl.isNullOrEmpty()) {
-                throw DownloadException(true, ytdlErr.message ?: "فشل التحميل")
-            }
-
-            // Start the fallback from a clean file so the resumed stream cannot be mixed
-            // with partially written yt-dlp output.
             try {
-                if (outputFile.exists()) outputFile.delete()
-            } catch (t: Throwable) {
-                Log.w("DownloadRepository", "Failed to reset partial file before fallback", t)
-            }
+                YoutubeDL.getInstance().execute(request, downloadId.toString()) { progress, eta, line ->
+                    val now = System.currentTimeMillis()
 
-            downloadDirectStream(
-                downloadId = downloadId,
-                targetUrl = emergencyUrl,
-                outputFile = outputFile,
-                isVideo = isVideo,
-                isAudioOnly = isAudioOnly,
-                onTelemetry = onTelemetry
-            )
+                    // yt-dlp prints the live speed inside the progress line:
+                    // "[download]  45.2% of 120.00MiB at 2.35MiB/s ETA 00:32"
+                    val parsedSpeed = parseSpeedFromLine(line)
+                    if (parsedSpeed > 0L) {
+                        speed = parsedSpeed
+                    } else {
+                        val sampleElapsed = now - lastSizeSampleAt
+                        if (sampleElapsed >= 1000L) {
+                            val size = currentOutputSize(outputFile)
+                            if (size >= lastSizeSample) {
+                                speed = ((size - lastSizeSample) * 1000L) / sampleElapsed
+                            }
+                            lastSizeSample = size
+                            lastSizeSampleAt = now
+                        }
+                    }
+                    if (eta > 0L) {
+                        lastEta = eta
+                    }
+
+                    if (now - lastProgressUpdate > 200) {
+                        lastProgressUpdate = now
+                        val p = progress / 100f
+                        val normalized = if (p < 0f) 0f else p
+                        val bytesSoFar = currentOutputSize(outputFile).takeIf { it > 0L } ?: -1L
+
+                        // trySend never blocks: a slow consumer simply loses intermediate ticks.
+                        telemetryChannel.trySend(
+                            DownloadTelemetry(
+                                progress = normalized,
+                                bytesDownloaded = bytesSoFar,
+                                speedBytesPerSec = speed,
+                                etaSeconds = lastEta,
+                                statusText = "جاري التحميل..."
+                            )
+                        )
+                    }
+                }
+            } catch (ytdlErr: Exception) {
+                Log.w("DownloadRepository", "YoutubeDL execute failed: ${ytdlErr.message}. Attempting fallback direct stream download...")
+
+                val emergencyUrl = resolveDirectUrl(context, originalUrl, isVideo, isAudioOnly)
+                if (emergencyUrl.isNullOrEmpty()) {
+                    throw DownloadException(true, ytdlErr.message ?: "فشل التحميل")
+                }
+
+                // Start the fallback from a clean file so the resumed stream cannot be mixed
+                // with partially written yt-dlp output.
+                try {
+                    if (outputFile.exists()) outputFile.delete()
+                } catch (t: Throwable) {
+                    Log.w("DownloadRepository", "Failed to reset partial file before fallback", t)
+                }
+
+                downloadDirectStream(
+                    downloadId = downloadId,
+                    targetUrl = emergencyUrl,
+                    outputFile = outputFile,
+                    isVideo = isVideo,
+                    isAudioOnly = isAudioOnly,
+                    onTelemetry = onTelemetry
+                )
+            } finally {
+                telemetryChannel.close()
+                telemetryCollector.join()
+            }
         }
     }
 
