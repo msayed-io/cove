@@ -51,11 +51,15 @@ jobs:
       - name: Assemble debug APK
         run: ./gradlew --no-daemon assembleDebug
 
+      - name: Apply official Cove package name
+        shell: bash
+        run: mv app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/Cove.apk
+
       - name: Verify APK output
         shell: bash
         run: |
           set -euo pipefail
-          apk="app/build/outputs/apk/debug/app-debug.apk"
+          apk="app/build/outputs/apk/debug/Cove.apk"
           test -s "$apk"
           echo "APK size: $(stat -c%s "$apk") bytes"
           sha256sum "$apk"
@@ -64,6 +68,6 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: cove-debug-apk-${{ github.sha }}
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: app/build/outputs/apk/debug/Cove.apk
           if-no-files-found: error
           retention-days: 14

@@ -105,6 +105,13 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: ./gradlew --no-daemon clean assembleRelease bundleRelease
 
+      - name: Apply official Cove package names
+        shell: bash
+        run: |
+          set -euo pipefail
+          mv app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/Cove.apk
+          mv app/build/outputs/bundle/release/app-release.aab app/build/outputs/bundle/release/Cove.aab
+
       - name: Verify release outputs and hashes
         id: outputs
         shell: bash
@@ -112,8 +119,8 @@ jobs:
           TAG: ${{ steps.version.outputs.tag }}
         run: |
           set -euo pipefail
-          apk="app/build/outputs/apk/release/app-release.apk"
-          aab="app/build/outputs/bundle/release/app-release.aab"
+          apk="app/build/outputs/apk/release/Cove.apk"
+          aab="app/build/outputs/bundle/release/Cove.aab"
           test -s "$apk"
           test -s "$aab"
           sha256sum "$apk" "$aab" | tee "$RUNNER_TEMP/${TAG}.sha256"
@@ -125,8 +132,8 @@ jobs:
         with:
           name: cove-${{ steps.version.outputs.tag }}
           path: |
-            app/build/outputs/apk/release/app-release.apk
-            app/build/outputs/bundle/release/app-release.aab
+            app/build/outputs/apk/release/Cove.apk
+            app/build/outputs/bundle/release/Cove.aab
             ${{ runner.temp }}/${{ steps.version.outputs.tag }}.sha256
           if-no-files-found: error
           retention-days: 30
@@ -143,8 +150,8 @@ jobs:
             --target "$RELEASE_SHA" \
             --title "Cove $TAG" \
             --generate-notes \
-            app/build/outputs/apk/release/app-release.apk \
-            app/build/outputs/bundle/release/app-release.aab \
+            app/build/outputs/apk/release/Cove.apk \
+            app/build/outputs/bundle/release/Cove.aab \
             "$RUNNER_TEMP/${TAG}.sha256"
 
       - name: Remove signing material
