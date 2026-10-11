@@ -1,0 +1,152 @@
+name: Android Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Semantic version increment"
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-release-main
+  cancel-in-progress: false
+
+env:
+  GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx4g
+
+jobs:
+  release:
+    name: Version, build, sign, and publish Android release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: android-release
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Java 17
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+
+      - name: Validate Gradle wrapper
+        uses: gradle/wrapper-validation-action@b5418f5a58f5fd2eb486dd7efb368fe7be7eae45 # v2
+
+      - name: Bump Android version
+        id: version
+        shell: bash
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          set -euo pipefail
+          python3 scripts/bump_android_version.py --bump "$BUMP" | tee "$RUNNER_TEMP/version.env"
+          cat "$RUNNER_TEMP/version.env" >> "$GITHUB_OUTPUT"
+          echo "Preparing release ${{ inputs.bump }}"
+
+      - name: Commit version and create tag
+        id: tag
+        shell: bash
+        env:
+          VERSION_NAME: ${{ steps.version.outputs.version_name }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/build.gradle.kts
+          git diff --cached --quiet && { echo "Version file was not changed" >&2; exit 1; }
+          git commit -m "chore(release): v${VERSION_NAME}"
+          git tag -a "$TAG" -m "Cove v${VERSION_NAME}"
+          git push origin HEAD:main
+          git push origin "$TAG"
+          echo "release_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Materialize signing keystore
+        id: signing
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$KEYSTORE_BASE64"
+          test -n "$KEYSTORE_PASSWORD"
+          test -n "$KEY_ALIAS"
+          test -n "$KEY_PASSWORD"
+          umask 077
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/cove-release.keystore"
+          test -s "$RUNNER_TEMP/cove-release.keystore"
+          keytool -list -keystore "$RUNNER_TEMP/cove-release.keystore" \
+            -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" >/dev/null
+          echo "keystore_path=$RUNNER_TEMP/cove-release.keystore" >> "$GITHUB_OUTPUT"
+
+      - name: Run unit tests
+        run: ./gradlew --no-daemon -PciUnitTests=true testDebugUnitTest
+
+      - name: Build signed APK and AAB
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ steps.signing.outputs.keystore_path }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./gradlew --no-daemon clean assembleRelease bundleRelease
+
+      - name: Verify release outputs and hashes
+        id: outputs
+        shell: bash
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          apk="app/build/outputs/apk/release/app-release.apk"
+          aab="app/build/outputs/bundle/release/app-release.aab"
+          test -s "$apk"
+          test -s "$aab"
+          sha256sum "$apk" "$aab" | tee "$RUNNER_TEMP/${TAG}.sha256"
+          echo "apk=$apk" >> "$GITHUB_OUTPUT"
+          echo "aab=$aab" >> "$GITHUB_OUTPUT"
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cove-${{ steps.version.outputs.tag }}
+          path: |
+            app/build/outputs/apk/release/app-release.apk
+            app/build/outputs/bundle/release/app-release.aab
+            ${{ runner.temp }}/${{ steps.version.outputs.tag }}.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          RELEASE_SHA: ${{ steps.tag.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$RELEASE_SHA" \
+            --title "Cove $TAG" \
+            --generate-notes \
+            app/build/outputs/apk/release/app-release.apk \
+            app/build/outputs/bundle/release/app-release.aab \
+            "$RUNNER_TEMP/${TAG}.sha256"
+
+      - name: Remove signing material
+        if: always()
+        run: rm -f "$RUNNER_TEMP/cove-release.keystore"
