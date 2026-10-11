@@ -70,6 +70,13 @@ android {
     }
   }
   testOptions { unitTests { isIncludeAndroidResources = true } }
+  tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+    if (providers.gradleProperty("ciUnitTests").orNull == "true") {
+      // Native Roborazzi Compose screenshots require a graphical host; keep the
+      // test available for local visual validation without blocking headless CI.
+      filter { excludeTestsMatching("com.example.GreetingScreenshotTest") }
+    }
+  }
 }
 
 // Configure the Secrets Gradle Plugin to use .env and .env.example files

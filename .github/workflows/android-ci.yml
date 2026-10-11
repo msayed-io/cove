@@ -46,7 +46,7 @@ jobs:
         uses: gradle/wrapper-validation-action@b5418f5a58f5fd2eb486dd7efb368fe7be7eae45 # v2
 
       - name: Run unit tests
-        run: ./gradlew --no-daemon testDebugUnitTest
+        run: ./gradlew --no-daemon -PciUnitTests=true testDebugUnitTest
 
       - name: Assemble debug APK
         run: ./gradlew --no-daemon assembleDebug
