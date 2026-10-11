@@ -36,3 +36,21 @@ data class ScrapedItem(
     val thumbnailUrl: String,
     val title: String
 )
+
+/**
+ * Live telemetry emitted while a download is running.
+ *
+ * This is intentionally an in-memory snapshot only (never persisted) so the
+ * Compose UI can mirror exactly what the foreground notification is showing.
+ */
+data class DownloadTelemetry(
+    /** 0f..1f when known, -1f for an indeterminate/unknown total size. */
+    val progress: Float = -1f,
+    val bytesDownloaded: Long = -1L,
+    val totalBytes: Long = -1L,
+    /** -1L when the current speed is not available yet. */
+    val speedBytesPerSec: Long = -1L,
+    /** -1L when the remaining time cannot be computed. */
+    val etaSeconds: Long = -1L,
+    val statusText: String = ""
+)

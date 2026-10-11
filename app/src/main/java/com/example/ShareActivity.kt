@@ -201,10 +201,33 @@ class ShareActivity : ComponentActivity() {
     }
 
     private fun triggerDownload(req: DownloadRequest) {
-        val downloadRepository = com.example.api.NetworkModule.downloadRepository
+        // Route shared links through the same background pipeline as in-app downloads,
+        // so they keep running after this sheet is dismissed.
         kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
-                downloadRepository.downloadUrl(applicationContext, req.title, req.url, req.isVideo, req.isAudioOnly, req.thumbnailUrl)
+                val downloadRepository = com.example.api.NetworkModule.downloadRepository
+                val downloadId = com.example.download.DownloadScheduler.generateDownloadId()
+
+                val item = downloadRepository.registerPendingDownload(
+                    context = applicationContext,
+                    downloadId = downloadId,
+                    title = req.title,
+                    url = req.url,
+                    isVideo = req.isVideo,
+                    isAudioOnly = req.isAudioOnly,
+                    thumbnailUrl = req.thumbnailUrl
+                )
+
+                com.example.download.DownloadScheduler.enqueue(
+                    context = applicationContext,
+                    downloadId = downloadId,
+                    title = req.title,
+                    url = req.url,
+                    isVideo = req.isVideo,
+                    isAudioOnly = req.isAudioOnly,
+                    thumbnailUrl = req.thumbnailUrl,
+                    outputPath = item.localUri
+                )
             } catch (e: Exception) {
                 Log.e("ShareActivity", "Download enqueue failed for url: ${req.url}", e)
             }

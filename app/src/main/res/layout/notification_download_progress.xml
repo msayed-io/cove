@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Live download notification layout (RemoteViews friendly).
+    Only framework views are used so it can be inflated by the notification process.
+-->
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="#1C1C1E"
+    android:paddingStart="12dp"
+    android:paddingEnd="12dp"
+    android:paddingTop="8dp"
+    android:paddingBottom="8dp">
+
+    <!-- Thumbnail (local companion .thumb.jpg when available, launcher icon otherwise) -->
+    <ImageView
+        android:id="@+id/notification_progress_thumbnail"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:layout_alignParentStart="true"
+        android:layout_centerVertical="true"
+        android:scaleType="centerCrop"
+        android:src="@mipmap/ic_launcher" />
+
+    <!-- Percentage, pinned to the end side -->
+    <TextView
+        android:id="@+id/notification_progress_percent"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_alignParentEnd="true"
+        android:layout_centerVertical="true"
+        android:gravity="end"
+        android:minWidth="40dp"
+        android:textColor="#64D2FF"
+        android:textSize="13sp"
+        android:textStyle="bold" />
+
+    <!-- Title / status / progress bar -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_centerVertical="true"
+        android:layout_marginStart="10dp"
+        android:layout_marginEnd="8dp"
+        android:layout_toStartOf="@id/notification_progress_percent"
+        android:layout_toEndOf="@id/notification_progress_thumbnail"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/notification_progress_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textColor="#F2FFFFFF"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/notification_progress_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textColor="#99EBEBF5"
+            android:textSize="12sp" />
+
+        <ProgressBar
+            android:id="@+id/notification_progress_bar"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="match_parent"
+            android:layout_height="4dp"
+            android:layout_marginTop="6dp"
+            android:indeterminateTint="#64D2FF"
+            android:max="100"
+            android:progress="0"
+            android:progressBackgroundTint="#33FFFFFF"
+            android:progressTint="#64D2FF" />
+    </LinearLayout>
+
+</RelativeLayout>

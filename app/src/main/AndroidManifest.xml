@@ -10,6 +10,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
     <application
         android:name=".MediaApp"
@@ -48,6 +49,18 @@
             </intent-filter>
         </service>
 
+        <!--
+            WorkManager runs long downloads inside its own foreground service.
+            On Android 14+ (targetSdk 34+) the service must declare the
+            foregroundServiceType it is started with; WorkManager's manifest does
+            not declare it, so we merge it here. The matching runtime type is passed
+            through ForegroundInfo(..., FOREGROUND_SERVICE_TYPE_DATA_SYNC).
+        -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
+
         <activity
             android:name=".ShareActivity"
             android:exported="true"
@@ -63,6 +76,11 @@
                 android:name="android.service.chooser.chooser_target_service"
                 android:value="androidx.sharetarget.ChooserTargetServiceCompat" />
         </activity>
+
+        <!-- "إلغاء" action of the ongoing download notification. -->
+        <receiver
+            android:name=".download.DownloadCancelReceiver"
+            android:exported="false" />
     </application>
 
 </manifest>
