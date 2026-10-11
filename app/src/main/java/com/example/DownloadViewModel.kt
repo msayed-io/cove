@@ -2,8 +2,6 @@ package com.example
 
 import android.app.Application
 import android.content.Context
-import android.content.Intent
-import android.net.Uri
 import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -11,16 +9,14 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.api.NetworkModule
+import com.example.download.DownloadScheduler
 import com.example.domain.ScrapedMedia
 import com.example.domain.ScrapedItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import kotlinx.coroutines.withContext
 
 data class DownloadItem(
     val id: Long,
@@ -31,7 +27,12 @@ data class DownloadItem(
     val progress: Float, // 0.0f to 1.0f, or -1.0f for indeterminate
     val localUri: String? = null,
     val timestamp: Long = System.currentTimeMillis(),
-    val thumbnailUrl: String? = null
+    val thumbnailUrl: String? = null,
+    // Live telemetry (in-memory only) — mirrors what the ongoing notification shows.
+    val bytesDownloaded: Long = -1L,
+    val totalBytes: Long = -1L,
+    val speedBytesPerSec: Long = -1L,
+    val etaSeconds: Long = -1L
 )
 
 sealed interface ScrapingState {
@@ -161,13 +162,43 @@ class DownloadViewModel(application: Application) : AndroidViewModel(application
     fun downloadUrl(title: String, url: String, isVideo: Boolean, isAudioOnly: Boolean, thumbnailUrl: String? = null) {
         _scrapingState.value = ScrapingState.Idle
         inputUrl = "" // Clear after trigger
-        
+
         viewModelScope.launch {
             try {
-                val item = downloadRepository.downloadUrl(context, title, url, isVideo, isAudioOnly, thumbnailUrl)
-                showSuccessNotification(item.title, item.isVideo, item.localUri)
+                val downloadId = DownloadScheduler.generateDownloadId()
+
+                // Register the item off the main thread (resolves folders / writes a probe file)
+                // so the UI can show it instantly; the worker reuses the very same entry and
+                // output path, which is what makes resuming work.
+                val item = withContext(Dispatchers.IO) {
+                    downloadRepository.registerPendingDownload(
+                        context = context,
+                        downloadId = downloadId,
+                        title = title,
+                        url = url,
+                        isVideo = isVideo,
+                        isAudioOnly = isAudioOnly,
+                        thumbnailUrl = thumbnailUrl
+                    )
+                }
+
+                DownloadScheduler.enqueue(
+                    context = context,
+                    downloadId = downloadId,
+                    title = title,
+                    url = url,
+                    isVideo = isVideo,
+                    isAudioOnly = isAudioOnly,
+                    thumbnailUrl = thumbnailUrl,
+                    outputPath = item.localUri
+                )
             } catch (e: Exception) {
-                Log.e("DownloadViewModel", "Download failed", e)
+                Log.e("DownloadViewModel", "Failed to enqueue background download", e)
+                android.widget.Toast.makeText(
+                    context,
+                    "تعذر بدء التنزيل: ${e.localizedMessage ?: e.message}",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
             }
         }
     }
@@ -176,120 +207,26 @@ class DownloadViewModel(application: Application) : AndroidViewModel(application
         downloadUrl(title, url, isVideo, isAudioOnly, thumbnailUrl)
     }
 
-    private fun showSuccessNotification(title: String, isVideo: Boolean, localUriString: String?) {
+    /** Cancels a running background download without removing its entry. */
+    fun cancelDownload(id: Long) {
         try {
-            val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
-            val channelId = "cove_download_channel"
-            
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                val channel = android.app.NotificationChannel(
-                    channelId,
-                    "تنزيلات Cove",
-                    android.app.NotificationManager.IMPORTANCE_HIGH
-                ).apply {
-                    description = "إشعارات اكتمال تنزيل وسائط Cove"
-                    enableLights(true)
-                    lightColor = android.graphics.Color.GREEN
-                    enableVibration(true)
-                }
-                notificationManager.createNotificationChannel(channel)
-            }
-
-            val intent = Intent(context, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-                putExtra("tab", "HISTORY")
-            }
-            val pendingIntent = android.app.PendingIntent.getActivity(
-                context,
-                System.currentTimeMillis().toInt(),
-                intent,
-                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
-            )
-
-            val remoteViews = android.widget.RemoteViews(context.packageName, R.layout.notification_custom_complete)
-            remoteViews.setTextViewText(R.id.notification_title, title)
-            remoteViews.setTextViewText(R.id.notification_subtext, "اكتمل التنزيل، انقر للتحقق")
-            
-            val sdf = SimpleDateFormat("HH:mm", Locale.getDefault())
-            val currentTime = sdf.format(Date())
-            remoteViews.setTextViewText(R.id.notification_time, currentTime)
-
-            val thumbnailBitmap = getDownloadedMediaThumbnail(localUriString)
-            if (thumbnailBitmap != null) {
-                val roundedBitmap = getRoundedCornerBitmap(thumbnailBitmap, 24)
-                remoteViews.setImageViewBitmap(R.id.notification_thumbnail, roundedBitmap)
-            } else {
-                remoteViews.setImageViewResource(R.id.notification_thumbnail, R.mipmap.ic_launcher)
-            }
-
-            remoteViews.setImageViewResource(R.id.notification_status_icon, R.drawable.ic_green_check_circle)
-
-            val builder = androidx.core.app.NotificationCompat.Builder(context, channelId)
-                .setSmallIcon(android.R.drawable.stat_sys_download_done)
-                .setContentTitle(title)
-                .setContentText("اكتمل التنزيل، انقر للتحقق")
-                .setStyle(androidx.core.app.NotificationCompat.DecoratedCustomViewStyle())
-                .setCustomContentView(remoteViews)
-                .setCustomBigContentView(remoteViews)
-                .setCustomHeadsUpContentView(remoteViews)
-                .setContentIntent(pendingIntent)
-                .setAutoCancel(true)
-                .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
-
-            if (thumbnailBitmap != null) {
-                builder.setLargeIcon(thumbnailBitmap)
-            }
-
-            notificationManager.notify(System.currentTimeMillis().toInt(), builder.build())
+            downloadRepository.markCancelledByUser(id)
+            downloadRepository.stopActiveNetworkTask(id)
+            DownloadScheduler.cancel(context, id)
+            downloadRepository.markDownloadStatus(id, "تم إلغاء التنزيل")
         } catch (e: Exception) {
-            Log.e("DownloadViewModel", "Failed to show custom success notification", e)
+            Log.e("DownloadViewModel", "Failed to cancel download $id", e)
         }
-    }
-
-    private fun getDownloadedMediaThumbnail(localUriString: String?): android.graphics.Bitmap? {
-        if (localUriString == null) return null
-        try {
-            val file = File(localUriString)
-            if (!file.exists()) return null
-
-            if (file.name.endsWith(".mp4", ignoreCase = true)) {
-                val retriever = android.media.MediaMetadataRetriever()
-                retriever.setDataSource(localUriString)
-                val bitmap = retriever.getFrameAtTime(1000000) // 1 second
-                retriever.release()
-                return bitmap
-            } else if (file.name.endsWith(".jpg", ignoreCase = true) || file.name.endsWith(".png", ignoreCase = true)) {
-                return android.graphics.BitmapFactory.decodeFile(localUriString)
-            }
-        } catch (e: Exception) {
-            Log.e("DownloadViewModel", "Failed to retrieve thumbnail", e)
-        }
-        return null
-    }
-
-    private fun getRoundedCornerBitmap(bitmap: android.graphics.Bitmap, pixels: Int): android.graphics.Bitmap {
-        val output = android.graphics.Bitmap.createBitmap(bitmap.width, bitmap.height, android.graphics.Bitmap.Config.ARGB_8888)
-        val canvas = android.graphics.Canvas(output)
-
-        val color = 0xff424242.toInt()
-        val paint = android.graphics.Paint()
-        val rect = android.graphics.Rect(0, 0, bitmap.width, bitmap.height)
-        val rectF = android.graphics.RectF(rect)
-        val roundPx = pixels.toFloat()
-
-        paint.isAntiAlias = true
-        canvas.drawARGB(0, 0, 0, 0)
-        paint.color = color
-        canvas.drawRoundRect(rectF, roundPx, roundPx, paint)
-
-        paint.setXfermode(android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC_IN))
-        canvas.drawBitmap(bitmap, rect, rect, paint)
-
-        return output
     }
 
     fun deleteDownload(id: Long) {
         viewModelScope.launch {
+            try {
+                // Stop any pending/running work before removing the entry and its file.
+                DownloadScheduler.cancel(context, id)
+            } catch (e: Exception) {
+                Log.w("DownloadViewModel", "Failed to cancel work for $id", e)
+            }
             downloadRepository.deleteItem(id)
         }
     }

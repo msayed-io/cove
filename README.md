@@ -40,6 +40,10 @@ flowchart TD
 | `app/src/main/java/com/example/api/NetworkModule.kt` | إعداد عميل الشبكة وطلبات HTTP |
 | `app/src/main/java/com/example/api/OkHttpDownloader.kt` | موفّر الشبكة المستخدم مع أدوات استخراج الوسائط |
 | `app/src/main/java/com/example/PlaybackService.kt` | خدمة التشغيل في الخلفية عبر Media3 |
+| `app/src/main/java/com/example/download/DownloadWorker.kt` | تنفيذ التنزيل داخل WorkManager (يستمر بعد إغلاق التطبيق أو قفل الشاشة) |
+| `app/src/main/java/com/example/download/DownloadScheduler.kt` | جدولة/إلغاء مهام التنزيل وسياسة إعادة المحاولة التلقائية |
+| `app/src/main/java/com/example/download/DownloadNotifications.kt` | إشعار التقدّم الحي وإشعارات الاكتمال/الفشل |
+| `app/src/main/java/com/example/data/DownloadRepository.kt` | محرّك التنزيل (استخراج، استئناف، تليمتري التقدّم) |
 | `app/src/main/java/com/example/ShareActivity.kt` | استقبال الروابط من قائمة مشاركة Android |
 | `app/src/main/java/com/example/ui/theme/` | الألوان، الخطوط، والنظام البصري |
 | `app/src/main/res/` | الموارد، الأيقونات، التخطيطات، والخطوط العربية |
@@ -55,6 +59,18 @@ flowchart TD
 5. ينفّذ `DownloadRepository` التنزيل ويحفظ النتيجة في مساحة تخزين Android.
 6. يرسل التطبيق إشعار النجاح أو الخطأ، ويمكن تشغيل الملف من خلال Media3.
 7. يمكن استقبال الروابط مباشرة عبر `ShareActivity`.
+
+## التنزيل في الخلفية والإشعارات
+
+منذ إدخال WorkManager لم يعد التنزيل مرتبطًا بدورة حياة الواجهة:
+
+1. عند طلب تنزيل يُسجَّل العنصر فورًا في `DownloadRepository.downloadsFlow` (ليظهر في «ملفاتي» لحظيًا) ثم تُجدول مهمة `DownloadWorker` باسم فريد مرتبط بمعرّف العنصر.
+2. يعمل الـ Worker كخدمة أمامية من نوع `dataSync` طوال مدة التنزيل، فيستمر بعد قفل الشاشة أو إغلاق التطبيق، ويُعاد تشغيله تلقائيًا بعد إعادة تشغيل الجهاز.
+3. تُنقل لحظات التقدّم عبر `DownloadTelemetry` (نسبة، سرعة، وقت متبقٍ، الحجم) إلى:
+   - إشعار حي بشريط تقدّم (`res/layout/notification_download_progress.xml`) مع زر **إلغاء**.
+   - حقول `DownloadItem` في الـ StateFlow، فتتحدّث شاشة «ملفاتي» بالتوازي مع الإشعار.
+4. عند حدوث خطأ شبكي مؤقت يعيد WorkManager المحاولة تلقائيًا بسياسة `BackoffPolicy.EXPONENTIAL` (حتى 3 محاولات) قبل عرض أي رسالة فشل.
+5. التنزيل المباشر يدعم **الاستئناف** عبر ترويسة `Range`، فلا يُعاد تحميل ما تم تنزيله بالفعل.
 
 ## المتطلبات
 
@@ -96,6 +112,7 @@ cd cove
 - **استخراج الوسائط:** NewPipe Extractor و `youtubedl-android`
 - **التشغيل:** AndroidX Media3
 - **التخزين:** Room و MediaStore حسب السيناريو
+- **التنزيل في الخلفية:** WorkManager (`CoroutineWorker` + خدمة أمامية `dataSync`) مع استئناف واسترجاع تلقائي
 - **الخطوط:** IBM Plex Sans Arabic و Plus Jakarta Sans وموارد الخطوط المرفقة
 - **الحد الأدنى للنظام:** Android API 24
 
@@ -108,6 +125,7 @@ cove/
 │   │   ├── api/              # الشبكة والعملاء
 │   │   ├── data/             # المستودعات ومصادر البيانات
 │   │   ├── domain/           # النماذج وحالات الاستخدام
+│   │   ├── download/         # WorkManager + إشعارات التنزيل الحي
 │   │   ├── ui/theme/         # الهوية البصرية
 │   │   └── *Screen.kt        # شاشات التطبيق
 │   └── src/main/res/         # موارد Android

@@ -2185,7 +2185,14 @@ fun DownloadHistoryItemCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = item.statusText,
+                        text = buildString {
+                            append(item.statusText)
+                            val etaText = com.example.download.DownloadFormat.eta(item.etaSeconds)
+                            if (etaText.isNotEmpty()) {
+                                append(" • ")
+                                append(etaText)
+                            }
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = OmniGetDesignTokens.TextSecondary,
                         fontSize = 11.sp,
@@ -2195,11 +2202,35 @@ fun DownloadHistoryItemCard(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "${(item.progress * 100).toInt()}%",
+                        text = buildString {
+                            append("${(item.progress * 100).toInt()}%")
+                            val speedText = com.example.download.DownloadFormat.speed(item.speedBytesPerSec)
+                            if (speedText.isNotEmpty()) {
+                                append(" • ")
+                                append(speedText)
+                            }
+                        },
                         style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
                         color = OmniGetDesignTokens.Accent,
                         fontSize = 11.sp
                     )
+                    if (!item.statusText.contains("فشل") && item.statusText != "تم إلغاء التنزيل") {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Box(
+                            modifier = Modifier
+                                .size(24.dp)
+                                .clip(CircleShape)
+                                .clickable { downloadViewModel.cancelDownload(item.id) },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Close,
+                                contentDescription = "إلغاء التنزيل",
+                                tint = OmniGetDesignTokens.DangerText,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+                    }
                 }
             } else if (item.progress == -1f && !isCompleted) {
                 Spacer(modifier = Modifier.height(8.dp))

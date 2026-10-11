@@ -4,13 +4,18 @@ import android.os.Build
 import android.os.Environment
 import android.util.Log
 import com.example.DownloadItem
+import com.example.domain.DownloadTelemetry
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLRequest
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.withContext
 import java.io.File
 import okhttp3.OkHttpClient
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -23,6 +28,20 @@ import okhttp3.RequestBody.Companion.toRequestBody
 class DownloadRepository {
 
     val downloadsFlow = MutableStateFlow<List<DownloadItem>>(emptyList())
+
+    /** In-flight HTTP calls so a running download can be cancelled on demand. */
+    private val activeCalls = ConcurrentHashMap<Long, okhttp3.Call>()
+
+    /** Downloads the user cancelled explicitly (never reported as failures). */
+    private val cancelledByUser = ConcurrentHashMap.newKeySet<Long>()
+
+    /** Guards the copy-on-write updates of [downloadsFlow] against parallel workers. */
+    private val flowLock = Any()
+
+    private companion object {
+        /** Matches the live speed reported by yt-dlp, e.g. "at 2.35MiB/s". */
+        private val SPEED_PATTERN = Pattern.compile("""at\s+([\d.]+)\s*([KMGT]?)i?B/s""", Pattern.CASE_INSENSITIVE)
+    }
 
     init {
         scanDownloadedFiles()
@@ -148,7 +167,9 @@ class DownloadRepository {
             items.addAll(activeItems)
             
             items.sortByDescending { it.timestamp }
-            downloadsFlow.value = items
+            synchronized(flowLock) {
+                downloadsFlow.value = items
+            }
         } catch (e: Exception) {
             Log.e("DownloadRepository", "Failed to scan downloaded files", e)
         }
@@ -446,23 +467,80 @@ class DownloadRepository {
         null
     }
 
-    suspend fun downloadUrl(context: android.content.Context, title: String, url: String, isVideo: Boolean, isAudioOnly: Boolean, thumbnailUrl: String? = null): DownloadItem = withContext(Dispatchers.IO) {
-        val extension = if (isAudioOnly) "mp3" else (if (isVideo) "mp4" else "jpg")
-        val sanitizedTitle = title.take(30).replace(Regex("[^\\w\\s\\u0600-\\u06FF]"), "").trim()
-        val fileName = "Media_${System.currentTimeMillis()}_$sanitizedTitle.$extension"
-        
-        val coveDir = getCoveBaseDir(context)
-        val subDirName = if (isAudioOnly) "Cove Audio" else (if (isVideo) "Cove Video" else "Cove Image")
-        val targetDir = File(coveDir, subDirName)
-        if (!targetDir.exists()) {
-            targetDir.mkdirs()
+    /**
+     * Raised by [downloadUrl] so callers can distinguish a transient network problem
+     * (worth retrying with exponential backoff) from a permanent failure.
+     */
+    class DownloadException(val retryable: Boolean, message: String) : Exception(message)
+
+    /**
+     * Creates (or returns) the StateFlow entry of a download so the Compose UI can
+     * display it immediately — before the background worker even starts running.
+     */
+    fun registerPendingDownload(
+        context: android.content.Context,
+        downloadId: Long,
+        title: String,
+        url: String,
+        isVideo: Boolean,
+        isAudioOnly: Boolean,
+        thumbnailUrl: String? = null,
+        preferredPath: String? = null
+    ): DownloadItem {
+        downloadsFlow.value.firstOrNull { it.id == downloadId }?.let { return it }
+
+        val item = buildDownloadItem(
+            context = context,
+            downloadId = downloadId,
+            title = title,
+            url = url,
+            isVideo = isVideo,
+            isAudioOnly = isAudioOnly,
+            thumbnailUrl = thumbnailUrl,
+            preferredPath = preferredPath
+        )
+
+        synchronized(flowLock) {
+            downloadsFlow.value.firstOrNull { it.id == downloadId }?.let { return it }
+
+            val currentList = downloadsFlow.value.toMutableList()
+            // A previous disk scan (e.g. after a process restart) may already list this exact
+            // file under a path-derived id — keep a single entry per file.
+            item.localUri?.let { path -> currentList.removeAll { it.id != downloadId && it.localUri == path } }
+            currentList.add(0, item)
+            downloadsFlow.value = currentList
         }
-        val outputFile = File(targetDir, fileName)
-        
-        val taskId = System.currentTimeMillis().toString()
-        val downloadId = taskId.hashCode().toLong()
-        
-        val newItem = DownloadItem(
+        return item
+    }
+
+    /** Builds the download entry (shared by the UI pre-registration and the engine itself). */
+    private fun buildDownloadItem(
+        context: android.content.Context,
+        downloadId: Long,
+        title: String,
+        url: String,
+        isVideo: Boolean,
+        isAudioOnly: Boolean,
+        thumbnailUrl: String?,
+        preferredPath: String? = null
+    ): DownloadItem {
+        val outputFile = if (!preferredPath.isNullOrBlank()) {
+            File(preferredPath)
+        } else {
+            val extension = if (isAudioOnly) "mp3" else (if (isVideo) "mp4" else "jpg")
+            val sanitizedTitle = title.take(30).replace(Regex("[^\\w\\s\\u0600-\\u06FF]"), "").trim()
+            val fileName = "Media_${System.currentTimeMillis()}_$sanitizedTitle.$extension"
+
+            val coveDir = getCoveBaseDir(context)
+            val subDirName = if (isAudioOnly) "Cove Audio" else (if (isVideo) "Cove Video" else "Cove Image")
+            val targetDir = File(coveDir, subDirName)
+            if (!targetDir.exists()) {
+                targetDir.mkdirs()
+            }
+            File(targetDir, fileName)
+        }
+
+        return DownloadItem(
             id = downloadId,
             title = if (isAudioOnly) "$title (صوت)" else title,
             mediaUrl = url,
@@ -472,16 +550,88 @@ class DownloadRepository {
             localUri = outputFile.absolutePath,
             thumbnailUrl = thumbnailUrl
         )
-        
-        val currentList = downloadsFlow.value.toMutableList()
-        currentList.add(0, newItem)
-        downloadsFlow.value = currentList
-        
+    }
+
+    /** Updates only the human readable status of an item (worker lifecycle messages). */
+    fun markDownloadStatus(id: Long, statusText: String) {
+        updateItem(id) { it.copy(statusText = statusText) }
+    }
+
+    fun markCancelledByUser(id: Long) {
+        cancelledByUser.add(id)
+    }
+
+    fun isCancelledByUser(id: Long): Boolean = cancelledByUser.contains(id)
+
+    /**
+     * Tears down the network side of a running download: the OkHttp call and/or the
+     * yt-dlp/aria2c child process registered under the same id. Safe to call repeatedly.
+     */
+    fun stopActiveNetworkTask(id: Long) {
+        try {
+            activeCalls.remove(id)?.cancel()
+        } catch (t: Throwable) {
+            Log.w("DownloadRepository", "Failed to cancel HTTP call for $id", t)
+        }
+        try {
+            YoutubeDL.getInstance().destroyProcessById(id.toString())
+        } catch (t: Throwable) {
+            Log.w("DownloadRepository", "Failed to destroy yt-dlp process for $id", t)
+        }
+    }
+
+    suspend fun downloadUrl(
+        context: android.content.Context,
+        title: String,
+        url: String,
+        isVideo: Boolean,
+        isAudioOnly: Boolean,
+        thumbnailUrl: String? = null,
+        taskId: Long? = null,
+        outputPathOverride: String? = null,
+        onTelemetry: (suspend (DownloadTelemetry) -> Unit)? = null
+    ): DownloadItem = withContext(Dispatchers.IO) {
+        // Reuse the entry registered by the UI/worker, otherwise create one exactly
+        // like before (same naming, same folders, same ordering).
+        val newItem = taskId?.let { id -> downloadsFlow.value.firstOrNull { it.id == id } }
+            ?: run {
+                val generatedId = taskId ?: System.currentTimeMillis().toString().hashCode().toLong()
+                val item = buildDownloadItem(
+                    context = context,
+                    downloadId = generatedId,
+                    title = title,
+                    url = url,
+                    isVideo = isVideo,
+                    isAudioOnly = isAudioOnly,
+                    thumbnailUrl = thumbnailUrl,
+                    preferredPath = outputPathOverride
+                )
+                synchronized(flowLock) {
+                    val currentList = downloadsFlow.value.toMutableList()
+                    currentList.add(0, item)
+                    downloadsFlow.value = currentList
+                }
+                item
+            }
+
+        val downloadId = newItem.id
+        val outputUri = newItem.localUri
+        if (outputUri.isNullOrBlank()) {
+            throw DownloadException(false, "تعذر تحديد مسار حفظ الملف")
+        }
+
+        val outputFile = File(outputUri)
+        outputFile.parentFile?.let { parent -> if (!parent.exists()) parent.mkdirs() }
+
+        // A brand new attempt clears any previous cancellation flag.
+        cancelledByUser.remove(downloadId)
+        updateItem(downloadId) { it.copy(statusText = "جاري التحضير...") }
+
         try {
             // Resolve direct download URL first for maximum reliability and 100% video+audio merging bypass
             var targetUrl = url
             var isResolvedDirect = isDirectFileUrl(url)
-            
+
             if (!isResolvedDirect) {
                 val resolved = resolveDirectUrl(context, url, isVideo, isAudioOnly)
                 if (resolved != null) {
@@ -490,155 +640,29 @@ class DownloadRepository {
                     Log.d("DownloadRepository", "Resolved direct stream URL: $targetUrl")
                 }
             }
-            
+
             if (isResolvedDirect) {
-                // Direct file download (Image, Video, or Audio) using OkHttp with optimized buffer
-                val client = com.example.api.NetworkModule.okHttpClient
-                val dlRequest = okhttp3.Request.Builder()
-                    .url(targetUrl)
-                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
-                    .build()
-                
-                client.newCall(dlRequest).execute().use { response ->
-                    if (!response.isSuccessful) {
-                        throw Exception("فشل الاتصال بالخادم: رمز الخطأ ${response.code}")
-                    }
-                    val body = response.body ?: throw Exception("محتوى الملف فارغ")
-                    val totalBytes = body.contentLength()
-                    val inputStream = body.byteStream()
-                    val outputFileStream = java.io.FileOutputStream(outputFile)
-                    
-                    val buffer = ByteArray(262144) // 256 KB high-speed buffer
-                    var bytesRead: Int
-                    var totalRead = 0L
-                    var lastProgressUpdate = 0L
-                    
-                    val statusTextPrefix = if (isAudioOnly) "جاري تحميل الصوت..." else (if (isVideo) "جاري تحميل الفيديو..." else "جاري تحميل الصورة...")
-                    
-                    while (inputStream.read(buffer).also { bytesRead = it } != -1) {
-                        outputFileStream.write(buffer, 0, bytesRead)
-                        totalRead += bytesRead
-                        
-                        val now = System.currentTimeMillis()
-                        if (now - lastProgressUpdate > 200) { // Throttle UI updates to 5Hz for high performance
-                            lastProgressUpdate = now
-                            if (totalBytes > 0) {
-                                val progressPercent = totalRead.toFloat() / totalBytes.toFloat()
-                                updateItem(downloadId) {
-                                    it.copy(
-                                        progress = progressPercent,
-                                        statusText = statusTextPrefix
-                                    )
-                                }
-                            } else {
-                                updateItem(downloadId) {
-                                    it.copy(
-                                        progress = -1f,
-                                        statusText = statusTextPrefix
-                                    )
-                                }
-                            }
-                        }
-                    }
-                    outputFileStream.flush()
-                    outputFileStream.close()
-                    inputStream.close()
-                }
+                downloadDirectStream(
+                    downloadId = downloadId,
+                    targetUrl = targetUrl,
+                    outputFile = outputFile,
+                    isVideo = isVideo,
+                    isAudioOnly = isAudioOnly,
+                    onTelemetry = onTelemetry
+                )
             } else {
-                // Ensure YoutubeDL, FFmpeg, and Aria2c are fully initialized before starting download
-                try {
-                    com.yausername.youtubedl_android.YoutubeDL.getInstance().init(context)
-                    com.yausername.ffmpeg.FFmpeg.getInstance().init(context)
-                    com.yausername.aria2c.Aria2c.getInstance().init(context)
-                } catch (e: Throwable) {
-                    Log.e("DownloadRepository", "Failed to initialize YoutubeDL/FFmpeg/Aria2c", e)
-                }
-
-                // Video/Audio download acceleration using YoutubeDL
-                val request = YoutubeDLRequest(targetUrl)
-                request.addOption("--extractor-args", "youtube:player_client=tv,mweb,ios,android,web")
-                request.addOption("--no-check-certificates")
-                request.addOption("--geo-bypass")
-                request.addOption("--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
-                request.addOption("--add-header", "Referer: https://www.youtube.com/")
-                request.addOption("--buffer-size", "1024k")
-                request.addOption("--concurrent-fragments", "16")
-
-                if (isAudioOnly) {
-                    request.addOption("-f", "bestaudio/best")
-                    request.addOption("--extract-audio")
-                    request.addOption("--audio-format", "mp3")
-                    request.addOption("--audio-quality", "0")
-                    request.addOption("--embed-thumbnail")
-                    request.addOption("--add-metadata")
-                } else if (isVideo) {
-                    // Critical: download highest quality MP4 format containing BOTH audio and video, or merge via best format
-                    request.addOption("-f", "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best")
-                    request.addOption("--merge-output-format", "mp4")
-                }
-                
-                // Ensure ffmpeg is located by YoutubeDL
-                try {
-                    val ffmpegDir = java.io.File(context.noBackupFilesDir, "youtubedl-android/packages/ffmpeg")
-                    if (ffmpegDir.exists()) {
-                        request.addOption("--ffmpeg-location", ffmpegDir.absolutePath)
-                    }
-                } catch (e: Exception) {
-                    Log.w("DownloadRepository", "Failed to check ffmpeg package dir", e)
-                }
-
-                request.addOption("-o", outputFile.absolutePath)
-                
-                try {
-                    YoutubeDL.getInstance().execute(request, taskId) { progress, _, _ ->
-                        val p = progress / 100f
-                        updateItem(downloadId) {
-                            it.copy(
-                                progress = if (p < 0) 0f else p,
-                                statusText = "جاري التحميل..."
-                            )
-                        }
-                    }
-                } catch (ytdlErr: Exception) {
-                    Log.w("DownloadRepository", "YoutubeDL execute failed: ${ytdlErr.message}. Attempting fallback direct stream download...")
-                    val emergencyUrl = resolveDirectUrl(context, url, isVideo, isAudioOnly)
-                    if (!emergencyUrl.isNullOrEmpty()) {
-                        val client = com.example.api.NetworkModule.okHttpClient
-                        val dlRequest = okhttp3.Request.Builder()
-                            .url(emergencyUrl)
-                            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
-                            .build()
-                        client.newCall(dlRequest).execute().use { response ->
-                            if (!response.isSuccessful) throw Exception("فشل الاتصال بالخادم: ${response.code}")
-                            val body = response.body ?: throw Exception("محتوى الملف فارغ")
-                            val totalBytes = body.contentLength()
-                            val inputStream = body.byteStream()
-                            val outputFileStream = java.io.FileOutputStream(outputFile)
-                            val buffer = ByteArray(131072)
-                            var bytesRead: Int
-                            var totalRead = 0L
-                            var lastProgressUpdate = 0L
-                            val statusTextPrefix = if (isAudioOnly) "جاري تحميل الصوت..." else (if (isVideo) "جاري تحميل الفيديو..." else "جاري تحميل الصورة...")
-                            while (inputStream.read(buffer).also { bytesRead = it } != -1) {
-                                outputFileStream.write(buffer, 0, bytesRead)
-                                totalRead += bytesRead
-                                val now = System.currentTimeMillis()
-                                if (now - lastProgressUpdate > 200) {
-                                    lastProgressUpdate = now
-                                    val progressPercent = if (totalBytes > 0) totalRead.toFloat() / totalBytes.toFloat() else -1f
-                                    updateItem(downloadId) { it.copy(progress = progressPercent, statusText = statusTextPrefix) }
-                                }
-                            }
-                            outputFileStream.flush()
-                            outputFileStream.close()
-                            inputStream.close()
-                        }
-                    } else {
-                        throw ytdlErr
-                    }
-                }
+                downloadWithYoutubeDl(
+                    context = context,
+                    downloadId = downloadId,
+                    targetUrl = targetUrl,
+                    originalUrl = url,
+                    outputFile = outputFile,
+                    isVideo = isVideo,
+                    isAudioOnly = isAudioOnly,
+                    onTelemetry = onTelemetry
+                )
             }
-            
+
             // Save companion thumbnail if provided (crucial for local album art and gallery covers)
             if (!thumbnailUrl.isNullOrEmpty() && outputFile.exists()) {
                 try {
@@ -671,13 +695,27 @@ class DownloadRepository {
                 outputFile.absolutePath
             } else null
 
+            val finalBytes = if (outputFile.exists()) outputFile.length() else -1L
             updateItem(downloadId) {
                 it.copy(
                     progress = 1f,
                     statusText = "اكتمل بنجاح",
-                    thumbnailUrl = finalThumb
+                    thumbnailUrl = finalThumb,
+                    bytesDownloaded = finalBytes,
+                    totalBytes = if (finalBytes > 0) finalBytes else -1L,
+                    speedBytesPerSec = -1L,
+                    etaSeconds = -1L
                 )
             }
+            emitTelemetry(
+                onTelemetry,
+                DownloadTelemetry(
+                    progress = 1f,
+                    bytesDownloaded = finalBytes,
+                    totalBytes = if (finalBytes > 0) finalBytes else -1L,
+                    statusText = "اكتمل بنجاح"
+                )
+            )
 
             // Immediately scan the downloaded file to notify the media provider (Gallery)
             if (outputFile.exists()) {
@@ -689,44 +727,392 @@ class DownloadRepository {
                     Log.d("DownloadRepository", "Media scan completed for path: $path, uri: $uri")
                 }
             }
-            
+
             return@withContext newItem.copy(thumbnailUrl = finalThumb)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // Cooperative cancellation — never reported as a failure.
+            throw e
         } catch (e: Exception) {
             Log.e("DownloadRepository", "Download failed for $url", e)
-            updateItem(downloadId) {
-                it.copy(
-                    statusText = "فشل التحميل: ${e.message}"
-                )
-            }
-            throw Exception("فشل التحميل: ${e.message}")
+
+            val cancelled = isCancelledByUser(downloadId)
+            val message = if (cancelled) "تم إلغاء التنزيل" else "فشل التحميل: ${e.message}"
+            updateItem(downloadId) { it.copy(statusText = message) }
+
+            throw DownloadException(
+                retryable = !cancelled && isRetryable(e),
+                message = message
+            )
         }
     }
 
+    /**
+     * Direct HTTP download (images, muxed videos, resolved streams).
+     *
+     * Supports resuming: an interrupted file is continued through a Range request
+     * instead of restarting from scratch.
+     */
+    private suspend fun downloadDirectStream(
+        downloadId: Long,
+        targetUrl: String,
+        outputFile: File,
+        isVideo: Boolean,
+        isAudioOnly: Boolean,
+        onTelemetry: (suspend (DownloadTelemetry) -> Unit)?
+    ) {
+        val client = com.example.api.NetworkModule.okHttpClient
+        var existingBytes = if (outputFile.exists()) outputFile.length() else 0L
+
+        val requestBuilder = okhttp3.Request.Builder()
+            .url(targetUrl)
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
+        if (existingBytes > 0L) {
+            requestBuilder.header("Range", "bytes=$existingBytes-")
+        }
+
+        val call = client.newCall(requestBuilder.build())
+        activeCalls[downloadId] = call
+
+        val statusTextPrefix = if (isAudioOnly) "جاري تحميل الصوت..." else (if (isVideo) "جاري تحميل الفيديو..." else "جاري تحميل الصورة...")
+
+        try {
+            call.execute().use { response ->
+                if (response.code == 416 && existingBytes > 0L) {
+                    // The server refused our resume offset (the file changed server-side).
+                    outputFile.delete()
+                    throw DownloadException(true, "فشل الاتصال بالخادم: رمز الخطأ 416")
+                }
+
+                if (!response.isSuccessful) {
+                    throw DownloadException(
+                        retryable = response.code >= 500 || response.code == 429 || response.code == 408,
+                        message = "فشل الاتصال بالخادم: رمز الخطأ ${response.code}"
+                    )
+                }
+
+                val body = response.body ?: throw DownloadException(false, "محتوى الملف فارغ")
+
+                val isResuming = response.code == 206 && existingBytes > 0L
+                if (!isResuming) {
+                    // The server ignored our Range header → restart instead of corrupting the file.
+                    existingBytes = 0L
+                }
+
+                val contentLength = body.contentLength()
+                val totalBytes = if (contentLength > 0L) existingBytes + contentLength else -1L
+
+                val inputStream = body.byteStream()
+                val outputStream = java.io.FileOutputStream(outputFile, isResuming)
+                val buffer = ByteArray(262144) // 256 KB high-speed buffer
+
+                var bytesRead: Int
+                var totalRead = existingBytes
+                var lastProgressUpdate = 0L
+                var lastSpeedSampleAt = System.currentTimeMillis()
+                var lastSpeedSampleBytes = totalRead
+                var speed = -1L
+
+                try {
+                    while (inputStream.read(buffer).also { bytesRead = it } != -1) {
+                        outputStream.write(buffer, 0, bytesRead)
+                        totalRead += bytesRead
+
+                        val now = System.currentTimeMillis()
+
+                        val sampleElapsed = now - lastSpeedSampleAt
+                        if (sampleElapsed >= 500L) {
+                            speed = ((totalRead - lastSpeedSampleBytes) * 1000L) / sampleElapsed
+                            lastSpeedSampleAt = now
+                            lastSpeedSampleBytes = totalRead
+                        }
+
+                        if (now - lastProgressUpdate > 200) { // Throttle UI updates to 5Hz for high performance
+                            lastProgressUpdate = now
+
+                            val progress = if (totalBytes > 0L) totalRead.toFloat() / totalBytes.toFloat() else -1f
+                            val eta = if (speed > 0L && totalBytes > 0L) (totalBytes - totalRead) / speed else -1L
+
+                            updateItem(downloadId) {
+                                it.copy(
+                                    progress = progress,
+                                    statusText = statusTextPrefix,
+                                    bytesDownloaded = totalRead,
+                                    totalBytes = totalBytes,
+                                    speedBytesPerSec = speed,
+                                    etaSeconds = eta
+                                )
+                            }
+                            emitTelemetry(
+                                onTelemetry,
+                                DownloadTelemetry(
+                                    progress = progress,
+                                    bytesDownloaded = totalRead,
+                                    totalBytes = totalBytes,
+                                    speedBytesPerSec = speed,
+                                    etaSeconds = eta,
+                                    statusText = statusTextPrefix
+                                )
+                            )
+                        }
+                    }
+                    outputStream.flush()
+                } finally {
+                    try {
+                        outputStream.close()
+                    } catch (t: Throwable) {
+                        Log.w("DownloadRepository", "Failed to close output stream", t)
+                    }
+                    try {
+                        inputStream.close()
+                    } catch (t: Throwable) {
+                        Log.w("DownloadRepository", "Failed to close input stream", t)
+                    }
+                }
+            }
+        } finally {
+            activeCalls.remove(downloadId)
+        }
+    }
+
+    /**
+     * yt-dlp / ffmpeg / aria2c download for everything that is not a plain file URL,
+     * with the original emergency direct-stream fallback preserved.
+     */
+    private suspend fun downloadWithYoutubeDl(
+        context: android.content.Context,
+        downloadId: Long,
+        targetUrl: String,
+        originalUrl: String,
+        outputFile: File,
+        isVideo: Boolean,
+        isAudioOnly: Boolean,
+        onTelemetry: (suspend (DownloadTelemetry) -> Unit)?
+    ) {
+        // Ensure YoutubeDL, FFmpeg, and Aria2c are fully initialized before starting download
+        try {
+            YoutubeDL.getInstance().init(context)
+            com.yausername.ffmpeg.FFmpeg.getInstance().init(context)
+            com.yausername.aria2c.Aria2c.getInstance().init(context)
+        } catch (e: Throwable) {
+            Log.e("DownloadRepository", "Failed to initialize YoutubeDL/FFmpeg/Aria2c", e)
+        }
+
+        // Video/Audio download acceleration using YoutubeDL
+        val request = YoutubeDLRequest(targetUrl)
+        request.addOption("--extractor-args", "youtube:player_client=tv,mweb,ios,android,web")
+        request.addOption("--no-check-certificates")
+        request.addOption("--geo-bypass")
+        request.addOption("--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
+        request.addOption("--add-header", "Referer: https://www.youtube.com/")
+        request.addOption("--buffer-size", "1024k")
+        request.addOption("--concurrent-fragments", "16")
+
+        if (isAudioOnly) {
+            request.addOption("-f", "bestaudio/best")
+            request.addOption("--extract-audio")
+            request.addOption("--audio-format", "mp3")
+            request.addOption("--audio-quality", "0")
+            request.addOption("--embed-thumbnail")
+            request.addOption("--add-metadata")
+        } else if (isVideo) {
+            // Critical: download highest quality MP4 format containing BOTH audio and video, or merge via best format
+            request.addOption("-f", "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best")
+            request.addOption("--merge-output-format", "mp4")
+        }
+
+        // Ensure ffmpeg is located by YoutubeDL
+        try {
+            val ffmpegDir = java.io.File(context.noBackupFilesDir, "youtubedl-android/packages/ffmpeg")
+            if (ffmpegDir.exists()) {
+                request.addOption("--ffmpeg-location", ffmpegDir.absolutePath)
+            }
+        } catch (e: Exception) {
+            Log.w("DownloadRepository", "Failed to check ffmpeg package dir", e)
+        }
+
+        request.addOption("-o", outputFile.absolutePath)
+
+        var lastProgressUpdate = 0L
+        var lastSizeSampleAt = System.currentTimeMillis()
+        var lastSizeSample = currentOutputSize(outputFile)
+        var speed = -1L
+        var lastEta = -1L
+
+        // The yt-dlp progress callback is a plain (non-suspending) lambda, so telemetry is
+        // handed over through a conflated channel and emitted from an actual coroutine.
+        val telemetryChannel = Channel<DownloadTelemetry>(Channel.CONFLATED)
+
+        coroutineScope {
+            val telemetryCollector = launch {
+                for (telemetry in telemetryChannel) {
+                    updateItem(downloadId) { item ->
+                        item.copy(
+                            progress = telemetry.progress,
+                            statusText = telemetry.statusText,
+                            bytesDownloaded = telemetry.bytesDownloaded,
+                            speedBytesPerSec = telemetry.speedBytesPerSec,
+                            etaSeconds = telemetry.etaSeconds
+                        )
+                    }
+                    emitTelemetry(onTelemetry, telemetry)
+                }
+            }
+
+            try {
+                YoutubeDL.getInstance().execute(request, downloadId.toString()) { progress, eta, line ->
+                    val now = System.currentTimeMillis()
+
+                    // yt-dlp prints the live speed inside the progress line:
+                    // "[download]  45.2% of 120.00MiB at 2.35MiB/s ETA 00:32"
+                    val parsedSpeed = parseSpeedFromLine(line)
+                    if (parsedSpeed > 0L) {
+                        speed = parsedSpeed
+                    } else {
+                        val sampleElapsed = now - lastSizeSampleAt
+                        if (sampleElapsed >= 1000L) {
+                            val size = currentOutputSize(outputFile)
+                            if (size >= lastSizeSample) {
+                                speed = ((size - lastSizeSample) * 1000L) / sampleElapsed
+                            }
+                            lastSizeSample = size
+                            lastSizeSampleAt = now
+                        }
+                    }
+                    if (eta > 0L) {
+                        lastEta = eta
+                    }
+
+                    if (now - lastProgressUpdate > 200) {
+                        lastProgressUpdate = now
+                        val p = progress / 100f
+                        val normalized = if (p < 0f) 0f else p
+                        val bytesSoFar = currentOutputSize(outputFile).takeIf { it > 0L } ?: -1L
+
+                        // trySend never blocks: a slow consumer simply loses intermediate ticks.
+                        telemetryChannel.trySend(
+                            DownloadTelemetry(
+                                progress = normalized,
+                                bytesDownloaded = bytesSoFar,
+                                speedBytesPerSec = speed,
+                                etaSeconds = lastEta,
+                                statusText = "جاري التحميل..."
+                            )
+                        )
+                    }
+                }
+            } catch (ytdlErr: Exception) {
+                Log.w("DownloadRepository", "YoutubeDL execute failed: ${ytdlErr.message}. Attempting fallback direct stream download...")
+
+                val emergencyUrl = resolveDirectUrl(context, originalUrl, isVideo, isAudioOnly)
+                if (emergencyUrl.isNullOrEmpty()) {
+                    throw DownloadException(true, ytdlErr.message ?: "فشل التحميل")
+                }
+
+                // Start the fallback from a clean file so the resumed stream cannot be mixed
+                // with partially written yt-dlp output.
+                try {
+                    if (outputFile.exists()) outputFile.delete()
+                } catch (t: Throwable) {
+                    Log.w("DownloadRepository", "Failed to reset partial file before fallback", t)
+                }
+
+                downloadDirectStream(
+                    downloadId = downloadId,
+                    targetUrl = emergencyUrl,
+                    outputFile = outputFile,
+                    isVideo = isVideo,
+                    isAudioOnly = isAudioOnly,
+                    onTelemetry = onTelemetry
+                )
+            } finally {
+                telemetryChannel.close()
+                telemetryCollector.join()
+            }
+        }
+    }
+
+    /** Current on-disk size of an in-flight yt-dlp download (handles .part temp files). */
+    private fun currentOutputSize(outputFile: File): Long {
+        val directSize = if (outputFile.exists()) outputFile.length() else 0L
+        val partSize = try {
+            outputFile.parentFile?.listFiles()
+                ?.filter { it.name.startsWith(outputFile.name) && it.name.contains(".part") }
+                ?.maxOfOrNull { it.length() }
+                ?: 0L
+        } catch (t: Throwable) {
+            0L
+        }
+        return maxOf(directSize, partSize)
+    }
+
+    /** Extracts the download speed (bytes/second) from a raw yt-dlp progress line. */
+    private fun parseSpeedFromLine(line: String?): Long {
+        if (line.isNullOrBlank()) return -1L
+        val matcher = SPEED_PATTERN.matcher(line)
+        if (!matcher.find()) return -1L
+        val value = matcher.group(1)?.toDoubleOrNull() ?: return -1L
+        val multiplier = when (matcher.group(2)?.uppercase()) {
+            "K" -> 1024.0
+            "M" -> 1024.0 * 1024
+            "G" -> 1024.0 * 1024 * 1024
+            "T" -> 1024.0 * 1024 * 1024 * 1024
+            else -> 1.0
+        }
+        return (value * multiplier).toLong()
+    }
+
+    /** Emits live telemetry, never letting a UI/notification failure break the download. */
+    private suspend fun emitTelemetry(
+        callback: (suspend (DownloadTelemetry) -> Unit)?,
+        telemetry: DownloadTelemetry
+    ) {
+        try {
+            callback?.invoke(telemetry)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (t: Throwable) {
+            Log.w("DownloadRepository", "Telemetry callback failed: ${t.message}")
+        }
+    }
+
+    /** Classifies failures: transient network errors are worth a background retry. */
+    private fun isRetryable(t: Throwable): Boolean = when (t) {
+        is DownloadException -> t.retryable
+        is java.io.IOException -> true
+        else -> false
+    }
+
     private fun updateItem(id: Long, update: (DownloadItem) -> DownloadItem) {
-        val currentList = downloadsFlow.value.toMutableList()
-        val index = currentList.indexOfFirst { it.id == id }
-        if (index != -1) {
-            currentList[index] = update(currentList[index])
-            downloadsFlow.value = currentList
+        synchronized(flowLock) {
+            val currentList = downloadsFlow.value.toMutableList()
+            val index = currentList.indexOfFirst { it.id == id }
+            if (index != -1) {
+                currentList[index] = update(currentList[index])
+                downloadsFlow.value = currentList
+            }
         }
     }
 
     fun deleteItem(id: Long) {
-        val currentList = downloadsFlow.value.toMutableList()
-        val item = currentList.find { it.id == id }
-        if (item != null) {
-            item.localUri?.let { path ->
-                try {
-                    val file = File(path)
-                    if (file.exists()) {
-                        file.delete()
-                    }
-                } catch (e: Exception) {
-                    Log.e("DownloadRepository", "Failed to delete file on disk", e)
-                }
+        val item = downloadsFlow.value.find { it.id == id }
+
+        // Remove the entry under the lock, then touch the disk outside of it.
+        synchronized(flowLock) {
+            val currentList = downloadsFlow.value.toMutableList()
+            if (currentList.removeAll { it.id == id }) {
+                downloadsFlow.value = currentList
             }
-            currentList.removeAll { it.id == id }
-            downloadsFlow.value = currentList
+        }
+
+        item?.localUri?.let { path ->
+            try {
+                val file = File(path)
+                if (file.exists()) {
+                    file.delete()
+                }
+            } catch (e: Exception) {
+                Log.e("DownloadRepository", "Failed to delete file on disk", e)
+            }
         }
     }
 
