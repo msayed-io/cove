@@ -14,7 +14,7 @@
         android:layout_centerVertical="true"
         android:layout_marginStart="6dp"
         android:scaleType="centerCrop"
-        android:src="@drawable/ic_launcher_foreground" />
+        android:src="@drawable/cove_logo" />
 
     <!-- Far Right green checkmark circle -->
     <ImageView

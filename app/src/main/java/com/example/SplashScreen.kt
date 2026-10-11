@@ -45,7 +45,7 @@ fun SplashScreen(modifier: Modifier = Modifier) {
         contentAlignment = Alignment.Center
     ) {
         Image(
-            painter = painterResource(id = R.drawable.ic_launcher_foreground),
+            painter = painterResource(id = R.drawable.cove_logo),
             contentDescription = "Cove App Logo",
             modifier = Modifier
                 .size(180.dp)
