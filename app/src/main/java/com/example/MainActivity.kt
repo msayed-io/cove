@@ -499,7 +499,7 @@ fun MainScreen(viewModel: DownloadViewModel, searchViewModel: SearchViewModel, m
                                                 )
                                             }
                                             HorizontalDivider(
-                                                color = Color(0xFF1C1C1E),
+                                                color = CG.Elevated,
                                                 modifier = Modifier.padding(horizontal = 24.dp)
                                             )
                                         }
@@ -980,7 +980,7 @@ fun MainScreen(viewModel: DownloadViewModel, searchViewModel: SearchViewModel, m
             ) {
                 Card(
                     shape = RoundedCornerShape(32.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1c1c1e)),
+                    colors = CardDefaults.cardColors(containerColor = CG.Elevated),
                     modifier = Modifier
                         .width(280.dp)
                         .padding(16.dp),
@@ -1051,7 +1051,7 @@ fun MainScreen(viewModel: DownloadViewModel, searchViewModel: SearchViewModel, m
                                 },
                                 shape = RoundedCornerShape(14.dp),
                                 colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color(0xFF2c2c2e),
+                                    containerColor = CG.Card,
                                     contentColor = Color.White
                                 ),
                                 modifier = Modifier

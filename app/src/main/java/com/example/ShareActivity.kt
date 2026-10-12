@@ -97,7 +97,7 @@ class ShareActivity : ComponentActivity() {
                             ) {
                                 Card(
                                     shape = RoundedCornerShape(32.dp),
-                                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1C1B1B)),
+                                    colors = CardDefaults.cardColors(containerColor = CG.Void),
                                     modifier = Modifier
                                         .width(280.dp)
                                         .padding(16.dp),

@@ -13,8 +13,15 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.*
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitPointerEventScope
+import androidx.compose.foundation.gestures.forEachGesture
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.*
@@ -22,6 +29,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Brush
@@ -234,7 +242,7 @@ fun FullPlayerScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF09090B)) // Ultra premium deep black canvas
+            .background(CG.Void) // Ultra premium deep black canvas
             .statusBarsPadding()
             .navigationBarsPadding()
     ) {
@@ -282,7 +290,7 @@ fun FullPlayerScreen(
                             .fillMaxSize()
                             .background(
                                 Brush.verticalGradient(
-                                    colors = listOf(Color(0xFF1E1B4B), Color(0xFF09090B))
+                                    colors = listOf(CG.Cobalt, CG.Void)
                                 )
                             ),
                         contentAlignment = Alignment.Center
@@ -303,8 +311,8 @@ fun FullPlayerScreen(
                             modifier = Modifier
                                 .size(140.dp)
                                 .clip(CircleShape)
-                                .background(Color(0xFF18181B))
-                                .border(6.dp, Color(0xFF27272A), CircleShape)
+                                .background(CG.Elevated)
+                                .border(6.dp, CG.Card, CircleShape)
                                 .rotate(if (isPlaying) rotationAngle else 0f),
                             contentAlignment = Alignment.Center
                         ) {
@@ -425,20 +433,15 @@ fun FullPlayerScreen(
                                     color = Color.White.copy(alpha = 0.8f)
                                 )
 
-                                Slider(
-                                    value = progress,
-                                    onValueChange = { p ->
+                                CoveSeekBar(
+                                    progress = progress,
+                                    onSeek = { p ->
                                         val seekPos = (p * durationMs).toLong()
                                         viewModel.seekTo(seekPos)
                                     },
                                     modifier = Modifier
                                         .weight(1f)
-                                        .padding(horizontal = 12.dp),
-                                    colors = SliderDefaults.colors(
-                                        thumbColor = OmniGetDesignTokens.Accent, // Brand Accent Color
-                                        activeTrackColor = OmniGetDesignTokens.Accent,
-                                        inactiveTrackColor = Color.White.copy(alpha = 0.25f)
-                                    )
+                                        .padding(horizontal = 12.dp)
                                 )
 
                                 Text(
@@ -534,7 +537,7 @@ fun FullPlayerScreen(
                         modifier = Modifier
                             .size(46.dp)
                             .clip(CircleShape)
-                            .background(Color(0xFF27272A))
+                            .background(CG.Card)
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.Headphones,
@@ -556,7 +559,7 @@ fun FullPlayerScreen(
                         modifier = Modifier
                             .size(46.dp)
                             .clip(CircleShape)
-                            .background(Color(0xFF27272A))
+                            .background(CG.Card)
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.Share,
@@ -606,7 +609,7 @@ fun FullPlayerScreen(
                                         modifier = Modifier
                                             .size(90.dp, 52.dp)
                                             .clip(RoundedCornerShape(8.dp))
-                                            .background(Color(0xFF27272A))
+                                            .background(CG.Card)
                                     ) {
                                         AsyncImage(
                                             model = recThumb,
@@ -673,6 +676,70 @@ fun FullPlayerScreen(
                     showDownloadSheet = false
                     Toast.makeText(context, "بدأ تنزيل المقطع الآن بنجاح! 🚀", Toast.LENGTH_LONG).show()
                 }
+            )
+        }
+    }
+}
+
+// ----------------------------------------------------------------------------
+// شريط تقديم بأسلوب YouTube: مسار رفيع + جزء مُشغّل + مقبض يتمدد أثناء السحب
+// ----------------------------------------------------------------------------
+@Composable
+private fun CoveSeekBar(
+    progress: Float,
+    onSeek: (Float) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var dragging by remember { mutableStateOf(false) }
+    val density = LocalDensity.current
+    BoxWithConstraints(
+        modifier = modifier
+            .height(28.dp)
+            .pointerInput(Unit) {
+                forEachGesture {
+                    awaitPointerEventScope {
+                        val down = awaitFirstDown()
+                        down.consume()
+                        dragging = true
+                        val w = size.width.toFloat()
+                        onSeek((down.position.x / w).coerceIn(0f, 1f))
+                        do {
+                            val event = awaitPointerEvent()
+                            event.changes.forEach { it.consume() }
+                            val x = event.changes.first().position.x
+                            onSeek((x / w).coerceIn(0f, 1f))
+                        } while (event.changes.any { it.pressed })
+                        dragging = false
+                    }
+                }
+            }
+    ) {
+        val w = constraints.maxWidth.toFloat()
+        val trackH = if (dragging) 6.dp else 4.dp
+        val thumbSize = if (dragging) 16.dp else 12.dp
+        val thumbPx = with(density) { thumbSize.toPx() }
+        val p = progress.coerceIn(0f, 1f)
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.CenterStart) {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(trackH)
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.22f))
+            )
+            Box(
+                Modifier
+                    .fillMaxWidth(fraction = p)
+                    .height(trackH)
+                    .clip(CircleShape)
+                    .background(Color.White)
+            )
+            Box(
+                Modifier
+                    .size(thumbSize)
+                    .offset { IntOffset(((w - thumbPx) * p).roundToInt(), 0) }
+                    .clip(CircleShape)
+                    .background(Color.White)
             )
         }
     }
