@@ -392,7 +392,7 @@ private fun CobaltSearchBar(
         }
         // التوست
         Box(modifier = Modifier.fillMaxWidth().height(22.dp), contentAlignment = Alignment.TopCenter) {
-            AnimatedVisibility(visible = pasteToast, enter = fadeIn(tween(300)), exit = fadeOut(tween(300))) {
+            androidx.compose.animation.AnimatedVisibility(visible = pasteToast, enter = fadeIn(tween(300)), exit = fadeOut(tween(300))) {
                 Text(
                     text = stringResource(R.string.paste_toast_success),
                     color = CG.CobaltGlow,
@@ -401,7 +401,7 @@ private fun CobaltSearchBar(
                     fontFamily = CoveArabic
                 )
             }
-            AnimatedVisibility(visible = emptyToast, enter = fadeIn(tween(300)), exit = fadeOut(tween(300))) {
+            androidx.compose.animation.AnimatedVisibility(visible = emptyToast, enter = fadeIn(tween(300)), exit = fadeOut(tween(300))) {
                 Text(
                     text = "الصق رابطًا أولًا",
                     color = CG.CobaltGlow,
