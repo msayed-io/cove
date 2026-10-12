@@ -102,6 +102,7 @@ fun CobaltHome(
     hasPermission: Boolean,
     onRequestPermission: () -> Unit,
     onShowStarted: (Boolean) -> Unit,
+    onSearchQuery: (String) -> Unit,
 ) {
     val scrapingState by viewModel.scrapingState.collectAsState()
     var quickMode by remember { mutableStateOf(QuickMode.UHD) }
@@ -136,17 +137,11 @@ fun CobaltHome(
                 .statusBarsPadding()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp)
-                .padding(top = 40.dp)
+                .padding(top = 16.dp)
                 .padding(bottom = 112.dp),
         ) {
             // 1) الترويسة
-            CobaltTopBar(
-                onClose = {
-                    // D4: يمسح الحقل ويعيد حالتي الفحص والبحث للوضع الأولي
-                    viewModel.clearUrl()
-                    viewModel.setUrl("")
-                }
-            )
+            CobaltTopBar()
             Spacer(Modifier.height(24.dp))
 
             // 2) الهيرو
@@ -158,8 +153,12 @@ fun CobaltHome(
                 value = viewModel.inputUrl,
                 onValueChange = { viewModel.setUrl(it) },
                 onSearch = {
-                    if (viewModel.inputUrl.isNotBlank()) viewModel.fetchMedia()
-                    else { emptyToast = true; runCatching { focusRequester.requestFocus() } }
+                    val q = viewModel.inputUrl.trim()
+                    when {
+                        q.isBlank() -> { emptyToast = true; runCatching { focusRequester.requestFocus() } }
+                        android.util.Patterns.WEB_URL.matcher(q).matches() -> viewModel.fetchMedia()
+                        else -> onSearchQuery(q)
+                    }
                 },
                 onPaste = {
                     val clip = clipboard.getText()?.text.orEmpty()
@@ -230,11 +229,11 @@ fun CobaltHome(
 // الترويسة
 // ----------------------------------------------------------------------------
 @Composable
-private fun CobaltTopBar(onClose: () -> Unit) {
+private fun CobaltTopBar() {
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
+        horizontalArrangement = Arrangement.Start
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Icon(
@@ -251,29 +250,6 @@ private fun CobaltTopBar(onClose: () -> Unit) {
                 letterSpacing = (-0.025).sp,
                 color = CG.TextPrimary
             )
-        }
-        Box(
-            modifier = Modifier
-                .size(48.dp) // منطقة لمس
-                .clip(CircleShape)
-                .pressClickEffect(onClose),
-            contentAlignment = Alignment.Center
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(32.dp)
-                    .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.08f))
-                    .border(1.dp, Color.White.copy(alpha = 0.10f), CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Close,
-                    contentDescription = "إغلاق",
-                    tint = CG.Slate300,
-                    modifier = Modifier.size(16.dp)
-                )
-            }
         }
     }
 }
@@ -342,18 +318,18 @@ private fun CobaltSearchBar(
                 .padding(6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // زر البحث (يمين في RTL)
+            // زر اللصق/النسخ (يمين في RTL — البارز)
             Box(
                 modifier = Modifier
                     .size(44.dp)
                     .clip(CircleShape)
                     .background(Brush.horizontalGradient(listOf(CG.Cobalt, CG.CobaltLight)))
-                    .pressClickEffect(onSearch),
+                    .pressClickEffect(onPaste),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = Icons.Default.Search,
-                    contentDescription = "بحث",
+                    imageVector = Icons.Default.ContentPaste,
+                    contentDescription = "لصق",
                     tint = Color.White,
                     modifier = Modifier.size(16.dp)
                 )
@@ -383,17 +359,17 @@ private fun CobaltSearchBar(
                     }
                 }
             )
-            // زر اللصق (يسار في RTL)
+            // زر البحث (يسار في RTL)
             Box(
                 modifier = Modifier
                     .size(48.dp)
                     .clip(CircleShape)
-                    .pressClickEffect(onPaste),
+                    .pressClickEffect(onSearch),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = Icons.Default.ContentPaste,
-                    contentDescription = "لصق",
+                    imageVector = Icons.Default.Search,
+                    contentDescription = "بحث",
                     tint = CG.TextMuted,
                     modifier = Modifier.size(16.dp)
                 )
@@ -698,11 +674,6 @@ fun CoveDock(currentTab: ScreenTab, onTabSelected: (ScreenTab) -> Unit, modifier
                 label = stringResource(R.string.tab_search),
                 active = currentTab == ScreenTab.DOWNLOAD,
                 onClick = { onTabSelected(ScreenTab.DOWNLOAD) }
-            )
-            DockIcon(
-                icon = Icons.Default.Language,
-                active = currentTab == ScreenTab.BROWSER,
-                onClick = { onTabSelected(ScreenTab.BROWSER) }
             )
             DockIcon(
                 icon = Icons.Default.Folder,

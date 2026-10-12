@@ -210,14 +210,13 @@ class MainActivity : ComponentActivity() {
 }
 
 enum class ScreenTab {
-    DOWNLOAD, HISTORY, BROWSER
+    DOWNLOAD, HISTORY
 }
 
 
 private fun tabOrder(tab: ScreenTab): Int = when (tab) {
     ScreenTab.DOWNLOAD -> 0
-    ScreenTab.BROWSER -> 1
-    ScreenTab.HISTORY -> 2
+    ScreenTab.HISTORY -> 1
 }
 
 @Composable
@@ -631,15 +630,13 @@ fun MainScreen(viewModel: DownloadViewModel, searchViewModel: SearchViewModel, m
                                 viewModel = viewModel,
                                 hasPermission = hasPermissionState,
                                 onRequestPermission = requestStoragePermission,
-                                onShowStarted = { showDownloadStartedDialog = it }
+                                onShowStarted = { showDownloadStartedDialog = it },
+                                onSearchQuery = { q ->
+                                    searchViewModel.setSearching(true)
+                                    searchViewModel.performSearch(q)
+                                }
                             )
                         }
-                    }
-                    ScreenTab.BROWSER -> {
-                        BrowserScreen(
-                            viewModel = viewModel,
-                            modifier = Modifier.padding(bottom = 76.dp)
-                        )
                     }
                     ScreenTab.HISTORY -> {
                         val storageDetails = remember {
