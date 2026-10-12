@@ -6,7 +6,7 @@
 <RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:background="#1C1C1E"
+    android:background="#0B0F19"
     android:paddingStart="12dp"
     android:paddingEnd="12dp"
     android:paddingTop="8dp"
@@ -31,7 +31,7 @@
         android:layout_centerVertical="true"
         android:gravity="end"
         android:minWidth="40dp"
-        android:textColor="#64D2FF"
+        android:textColor="#60A5FA"
         android:textSize="13sp"
         android:textStyle="bold" />
 
@@ -72,11 +72,11 @@
             android:layout_width="match_parent"
             android:layout_height="4dp"
             android:layout_marginTop="6dp"
-            android:indeterminateTint="#64D2FF"
+            android:indeterminateTint="#60A5FA"
             android:max="100"
             android:progress="0"
             android:progressBackgroundTint="#33FFFFFF"
-            android:progressTint="#64D2FF" />
+            android:progressTint="#60A5FA" />
     </LinearLayout>
 
 </RelativeLayout>

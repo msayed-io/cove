@@ -213,9 +213,6 @@ enum class ScreenTab {
     DOWNLOAD, HISTORY, BROWSER
 }
 
-@Composable
-fun CoveBottomNavigation(
-    currentTab: ScreenTab,
     onTabSelected: (ScreenTab) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -324,9 +321,6 @@ fun PopularSiteItem(
     }
 }
 
-@Composable
-fun StoragePermissionBanner(
-    hasPermission: Boolean,
     onRequestPermission: () -> Unit
 ) {
     if (!hasPermission) {
@@ -495,8 +489,9 @@ fun MainScreen(viewModel: DownloadViewModel, searchViewModel: SearchViewModel, m
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(Color(0xFF000000))
+            .background(com.example.ui.theme.CG.Void)
     ) {
+        com.example.ui.theme.CobaltAtmosphericBackground()
 
         AnimatedContent(
             targetState = currentTab,
@@ -778,95 +773,12 @@ fun MainScreen(viewModel: DownloadViewModel, searchViewModel: SearchViewModel, m
                                 }
                             }
                         } else {
-                            // Unfocused Default Home/Downloads Page
-                            LazyColumn(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .background(Color.Transparent),
-                                contentPadding = PaddingValues(bottom = 140.dp),
-                                verticalArrangement = Arrangement.spacedBy(0.dp)
-                            ) {
-                                // Header: Custom Premium Hero
-                                item {
-                                    HeaderSection()
-                                }
-
-                                // Search Input Box (Pill shaped)
-                                item {
-                                    Box(modifier = Modifier.padding(horizontal = 20.dp).padding(top = 16.dp)) {
-                                        InputSection(
-                                            url = viewModel.inputUrl,
-                                            onUrlChange = { viewModel.setUrl(it) },
-                                            onClear = { viewModel.clearUrl() },
-                                            onFetch = { viewModel.fetchMedia() },
-                                            scrapingState = scrapingState,
-                                            onFocus = { searchViewModel.setSearching(true) }
-                                        )
-                                    }
-                                }
-
-                                if (!hasPermissionState) {
-                                    item {
-                                        Box(modifier = Modifier.padding(horizontal = 20.dp).padding(top = 8.dp)) {
-                                            StoragePermissionBanner(
-                                                hasPermission = false,
-                                                onRequestPermission = requestStoragePermission
-                                            )
-                                        }
-                                    }
-                                }
-
-                                // Extraction Result Preview / Error Card
-                                item {
-                                    Box(modifier = Modifier.padding(horizontal = 20.dp).padding(top = 20.dp)) {
-                                        AnimatedContent(
-                                            targetState = scrapingState,
-                                            transitionSpec = {
-                                                fadeIn() + slideInVertically() togetherWith fadeOut() + slideOutVertically()
-                                            },
-                                            label = "ScrapingResult"
-                                        ) { state ->
-                                            when (state) {
-                                                is ScrapingState.Loading -> {
-                                                    Box(
-                                                        modifier = Modifier
-                                                            .fillMaxWidth()
-                                                            .padding(24.dp),
-                                                        contentAlignment = Alignment.Center
-                                                    ) {
-                                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                                            CircularProgressIndicator(color = AccentSkyBlue)
-                                                            Spacer(modifier = Modifier.height(12.dp))
-                                                            Text(
-                                                                text = stringResource(R.string.btn_fetching),
-                                                                style = MaterialTheme.typography.bodyMedium,
-                                                                color = SilverZinc
-                                                            )
-                                                        }
-                                                    }
-                                                }
-                                                is ScrapingState.Success -> {
-                                                    ScrapedMediaPreviewCard(
-                                                        media = state.media,
-                                                        onStartDownloads = { requests ->
-                                                            requests.forEach { req ->
-                                                                viewModel.downloadUrl(req.title, req.url, req.isVideo, req.isAudioOnly, req.thumbnailUrl)
-                                                            }
-                                                            showDownloadStartedDialog = true
-                                                        }
-                                                    )
-                                                }
-                                                is ScrapingState.Error -> {
-                                                    ErrorCard(message = state.message)
-                                                }
-                                                is ScrapingState.Idle -> {
-                                                    // Pure blackspace optimization for premium minimal feel
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                            CobaltHome(
+                                viewModel = viewModel,
+                                hasPermission = hasPermissionState,
+                                onRequestPermission = requestStoragePermission,
+                                onShowStarted = { showDownloadStartedDialog = it }
+                            )
                         }
                     }
                     ScreenTab.BROWSER -> {
@@ -1018,10 +930,9 @@ fun MainScreen(viewModel: DownloadViewModel, searchViewModel: SearchViewModel, m
 
                             if (!hasPermissionState) {
                                 item {
-                                    StoragePermissionBanner(
-                                        hasPermission = false,
-                                        onRequestPermission = requestStoragePermission
-                                    )
+                                    Box(modifier = Modifier.padding(horizontal = 20.dp)) {
+                                        CobaltPermissionCard(onRequest = requestStoragePermission)
+                                    }
                                 }
                             }
 
@@ -1188,10 +1099,10 @@ fun MainScreen(viewModel: DownloadViewModel, searchViewModel: SearchViewModel, m
                     viewModel = playerViewModel,
                     onClick = { playerViewModel.setShowFullPlayer(true) }
                 )
-                
+
                 Spacer(modifier = Modifier.height(8.dp))
 
-                CoveBottomNavigation(
+                CoveDock(
                     currentTab = currentTab,
                     onTabSelected = { currentTab = it }
                 )
@@ -1310,69 +1221,7 @@ fun MainScreen(viewModel: DownloadViewModel, searchViewModel: SearchViewModel, m
     }
 }
 
-@Composable
-fun HeaderSection() {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(300.dp)
-    ) {
-        // Hero Background Image (New high-end generated artwork)
-        Image(
-            painter = painterResource(id = R.drawable.premium_dark_hero_1784150221018),
-            contentDescription = null,
-            modifier = Modifier.fillMaxSize(),
-            contentScale = ContentScale.Crop
-        )
 
-        // Glassmorphic / Ambient Dark Gradient Overlay
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(
-                            Color.Transparent,
-                            OledBlack.copy(alpha = 0.5f),
-                            OledBlack.copy(alpha = 0.9f),
-                            OledBlack
-                        )
-                    )
-                )
-        )
-
-        // Premium Typography and Branding
-        Column(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 20.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(
-                text = "Cove",
-                fontFamily = FontFamily.SansSerif,
-                fontSize = 38.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = (-1.5).sp,
-                color = OmniGetDesignTokens.TextPrimary
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = "بوابتك لتنزيل وتشغيل الوسائط بأعلى دقة",
-                style = MaterialTheme.typography.bodySmall.copy(
-                    fontWeight = FontWeight.Medium,
-                    letterSpacing = 0.2.sp
-                ),
-                color = OmniGetDesignTokens.TextSecondary
-            )
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun InputSection(
-    url: String,
     onUrlChange: (String) -> Unit,
     onClear: () -> Unit,
     onFetch: () -> Unit,
@@ -1489,9 +1338,6 @@ fun InputSection(
     }
 }
 
-@Composable
-fun ScrapedMediaPreviewCard(
-    media: ScrapedMedia,
     onStartDownloads: (List<DownloadRequest>) -> Unit
 ) {
     val hasCarousel = media.items.size > 1
@@ -1832,33 +1678,6 @@ fun ScrapedMediaPreviewCard(
     }
 }
 
-@Composable
-fun ErrorCard(message: String) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Color(0xFF3a1417), RoundedCornerShape(16.dp))
-            .border(1.dp, Color(0x12FFFFFF), RoundedCornerShape(16.dp))
-            .padding(16.dp)
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                imageVector = Icons.Rounded.Error,
-                contentDescription = null,
-                tint = Color(0xFFff453a),
-                modifier = Modifier.size(28.dp)
-            )
-            Spacer(modifier = Modifier.width(12.dp))
-            Text(
-                text = message,
-                style = MaterialTheme.typography.bodyMedium,
-                color = Color(0xFFffb4ab)
-            )
-        }
-    }
-}
 
 @Composable
 fun EmptyHistoryCard() {
