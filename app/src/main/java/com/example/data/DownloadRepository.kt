@@ -120,6 +120,9 @@ class DownloadRepository {
                         for (file in files) {
                             if (file.isFile && file.length() > 0 && !scannedPaths.contains(file.absolutePath)) {
                                 scannedPaths.add(file.absolutePath)
+
+                                // الصور المصغرة المرافقة (.thumb.jpg) ليست وسائط مستقلة — لا تُعرض كعنصر منفصل
+                                if (file.name.endsWith(".thumb.jpg")) continue
                                 
                                 // If this path is currently being downloaded actively, do NOT replace it with a completed state from disk scan
                                 if (activePaths.contains(file.absolutePath)) {
@@ -376,7 +379,20 @@ class DownloadRepository {
     suspend fun resolveDirectUrl(context: android.content.Context, url: String, isVideo: Boolean, isAudioOnly: Boolean): String? = withContext(Dispatchers.IO) {
         val lowerUrl = url.lowercase()
         val isYouTube = lowerUrl.contains("youtube.com") || lowerUrl.contains("youtu.be")
-        
+
+        // انستجرام/ثريدز: مستخرجات yt-dlp المدمج مكسورة لهذه المنصات، فنجرب أولًا
+        // حل رابط مباشر (CDN) عبر صفحة الـ embed/وسوم og — محاولة إضافية؛ عند فشلها
+        // يستمر السلوك الحالي (yt-dlp) كما هو دون أي تغيير.
+        if (!isYouTube && !isAudioOnly &&
+            (lowerUrl.contains("instagram.com") || lowerUrl.contains("threads.net") || lowerUrl.contains("threads.com"))
+        ) {
+            val direct = fetchInstagramThreadsDirect(url, isVideo)
+            if (direct != null) {
+                Log.d("DownloadRepository", "Resolved Instagram/Threads direct stream URL")
+                return@withContext direct
+            }
+        }
+
         if (isYouTube) {
             // 1. Try NewPipe
             try {
@@ -1463,6 +1479,56 @@ class DownloadRepository {
                 throw Exception("الرابط غير مدعوم أو لا يحتوي على وسائط قابلة للتنزيل.")
             }
             throw Exception("عذراً، فشل جلب معلومات الوسائط: ${e.localizedMessage ?: e.message}")
+        }
+    }
+
+    /**
+     * يحل رابط وسائط مباشر (CDN) لمنشورات انستجرام/ثريدز العامة متجاوزًا yt-dlp.
+     * يعتمد على صفحة الـ embed الخاصة بانستجرام (تعمل بدون تسجيل دخول) ووسوم og،
+     * ويعيد null عند الفشل ليُستكمل مسار التنزيل المعتاد.
+     */
+    private suspend fun fetchInstagramThreadsDirect(url: String, isVideo: Boolean): String? = withContext(Dispatchers.IO) {
+        try {
+            val client = com.example.api.NetworkModule.okHttpClient
+            val lower = url.lowercase()
+            val fetchUrls = mutableListOf<String>()
+            if (lower.contains("instagram.com")) {
+                val m = Regex("/(p|reel|reels|tv)/([^/?#]+)").find(url)
+                if (m != null) {
+                    fetchUrls += "https://www.instagram.com/${m.groupValues[1]}/${m.groupValues[2]}/embed/"
+                }
+                fetchUrls += url
+            } else {
+                fetchUrls += url
+            }
+
+            for (fetchUrl in fetchUrls) {
+                val html = try {
+                    client.newCall(
+                        okhttp3.Request.Builder()
+                            .url(fetchUrl)
+                            .header("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1")
+                            .build()
+                    ).execute().use { if (it.isSuccessful) it.body?.string() else null }
+                } catch (e: Exception) {
+                    null
+                } ?: continue
+
+                val video = findMetaTag(html, "og:video")
+                    ?: findMetaTag(html, "og:video:url")
+                    ?: findMetaTag(html, "og:video:secure_url")
+                    ?: Regex("<video[^>]*src=\"([^\"]+)\"").find(html)?.groupValues?.get(1)
+                    ?: Regex("\"playable_url\":\"([^\"]+)\"").find(html)?.groupValues?.get(1)
+                        ?.replace("\\u0026", "&")?.replace("\\/", "/")
+                val image = findMetaTag(html, "og:image") ?: findMetaTag(html, "og:image:secure_url")
+
+                val direct = if (isVideo) (video ?: image) else (image ?: video)
+                if (!direct.isNullOrEmpty()) return@withContext decodeHtmlEntities(direct)
+            }
+            null
+        } catch (e: Exception) {
+            Log.e("DownloadRepository", "Instagram/Threads direct resolve failed: ${e.message}")
+            null
         }
     }
 
