@@ -1,0 +1,29 @@
+{
+  "meta": {
+    "baseline_width_dp": 390,
+    "scale": "2x (780x1874 px)",
+    "method": "حساب يدوي من فئات Tailwind في Image_2_(3).html وفق مرجع Tailwind 3.4 (لا يتوفر متصفح بلا واجهة في البيئة)",
+    "unit": "dp (1px CSS = 1dp عند العرض 390)"
+  },
+  "canvas": { "width": 390, "content_inner_width": 350, "gutter": 20, "pt": 40, "pb": 112 },
+  "header": { "pb": 24, "px": 4, "brand_icon": 28, "brand_svg": 24, "wordmark_sp": 18, "close": 32, "close_touch": 48 },
+  "hero": { "mt": 4, "mb": 20, "title_sp": 30, "title_lineHeight": 37.5, "title_mb": 8, "desc_sp": 14, "desc_lineHeight": 22.75, "desc_maxWidth": 320 },
+  "search": {
+    "mb": 20, "p": 6, "radius": "full", "height": 58, "border": 1,
+    "btn": 44, "btn_icon": 16, "input_sp": 12, "input_px": 12,
+    "paste": 32, "paste_icon": 16, "paste_ml": 4, "paste_touch": 48,
+    "toast_mt": 6, "toast_sp": 12,
+    "shadow": ["0 10px 15px -3px rgba(0,0,0,0.5)", "0 4px 6px -4px rgba(0,0,0,0.5)"]
+  },
+  "card": { "radius": 30, "p": 20, "mb": 20, "border": 1, "bg_alpha": 0.75,
+    "toggle_mb": 20, "track_p": 4, "track_height": 38,
+    "pill_active_px": 20, "pill_active_py": 6, "pill_inactive_px": 16, "pill_sp": 12,
+    "rows_gap": 16, "row_pb": 14, "row_divider": 1, "text_pl": 12,
+    "title_sp": 14, "title_mb": 2, "desc_sp": 12, "desc_lineHeight": 18,
+    "badge": 28, "lock_icon": 14, "check_icon": 16, "footnote_pt": 16, "footnote_sp": 12 },
+  "cta": { "height": 56, "px": 24, "radius": "full", "text_sp": 16, "gap_to_terms": 12,
+    "terms_sp": 11, "terms_lineHeight": 17.875, "terms_maxWidth": 320 },
+  "dock": { "bottom": 24, "maxWidth": 320, "px": 12, "py": 8, "height": 58, "border": 1,
+    "active_py": 6, "active_px": 16, "active_icon": 16, "active_gap": 8, "active_sp": 12,
+    "inactive": 40, "inactive_icon": 16 }
+}
