@@ -130,78 +130,48 @@ fun MiniPlayer(
         enter = slideInVertically(initialOffsetY = { it }),
         exit = slideOutVertically(targetOffsetY = { it })
     ) {
-        DoubleBezelCard(
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(72.dp)
-                .padding(horizontal = OmniGetDesignTokens.Space8, vertical = OmniGetDesignTokens.Space4)
-                .clickable { onClick() },
-            outerColor = Color(0x0FFFFFFF),
-            innerColor = OmniGetDesignTokens.Surface2,
-            outerBorderColor = Color(0x12FFFFFF),
-            innerBorderColor = Color(0x05FFFFFF)
+                .padding(horizontal = 20.dp)
+                .clip(CircleShape)
+                .background(Color(0xFF0D111A))
+                .border(1.dp, Color.White.copy(alpha = 0.12f), CircleShape)
+                .clickable { onClick() }
+                .padding(horizontal = 8.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = OmniGetDesignTokens.Space8),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                val artworkUri = currentMediaItem?.mediaMetadata?.artworkUri?.toString()
-                val isLocal = artworkUri?.startsWith("/") == true || artworkUri?.startsWith("file://") == true
-                val mediaThumb = if (isLocal) rememberMediaThumbnail(artworkUri) else artworkUri
+            val artworkUri = currentMediaItem?.mediaMetadata?.artworkUri?.toString()
+            val isLocal = artworkUri?.startsWith("/") == true || artworkUri?.startsWith("file://") == true
+            val mediaThumb = if (isLocal) rememberMediaThumbnail(artworkUri) else artworkUri
 
-                AsyncImage(
-                    model = mediaThumb ?: currentMediaItem?.mediaMetadata?.artworkUri,
-                    contentDescription = null,
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(RoundedCornerShape(OmniGetDesignTokens.RadiusXs))
-                        .border(1.dp, Color(0x14FFFFFF), RoundedCornerShape(OmniGetDesignTokens.RadiusXs)),
-                    contentScale = ContentScale.Crop,
-                    error = painterResource(id = android.R.drawable.ic_media_play)
-                )
-
-                Spacer(modifier = Modifier.width(OmniGetDesignTokens.Space12))
-
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = currentMediaItem?.mediaMetadata?.title?.toString() ?: "Unknown",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = OmniGetDesignTokens.TextPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Text(
-                        text = currentMediaItem?.mediaMetadata?.artist?.toString() ?: "Unknown",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = OmniGetDesignTokens.TextSecondary,
-                        maxLines = 1
-                    )
-                }
-
-                IconButton(onClick = {
-                    if (isPlaying) player?.pause() else player?.play()
-                }) {
-                    Icon(
-                        imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                        contentDescription = null,
-                        tint = OmniGetDesignTokens.Accent
-                    )
-                }
-                
-                IconButton(onClick = { player?.stop(); player?.clearMediaItems() }) {
-                    Icon(
-                        imageVector = Icons.Rounded.Close,
-                        contentDescription = null,
-                        tint = OmniGetDesignTokens.TextSecondary
-                    )
-                }
+            AsyncImage(
+                model = mediaThumb ?: currentMediaItem?.mediaMetadata?.artworkUri,
+                contentDescription = null,
+                modifier = Modifier.size(40.dp).clip(CircleShape),
+                contentScale = ContentScale.Crop,
+                error = painterResource(id = android.R.drawable.ic_media_play)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Text(
+                text = currentMediaItem?.mediaMetadata?.title?.toString() ?: "Unknown",
+                color = Color.White,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            IconButton(onClick = { if (isPlaying) player?.pause() else player?.play() }) {
+                Icon(imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, contentDescription = null, tint = CG.CobaltGlow)
+            }
+            IconButton(onClick = { player?.stop(); player?.clearMediaItems() }) {
+                Icon(imageVector = Icons.Rounded.Close, contentDescription = null, tint = CG.TextMuted)
             }
         }
     }
 }
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

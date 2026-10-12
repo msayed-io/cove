@@ -658,16 +658,15 @@ private fun CobaltTermsSheet(onDismiss: () -> Unit) {
 fun CoveDock(currentTab: ScreenTab, onTabSelected: (ScreenTab) -> Unit, modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
-            .widthIn(max = 320.dp)
             .clip(CircleShape)
             .background(Color(0xFF0D111A))
             .border(1.dp, Color.White.copy(alpha = 0.12f), CircleShape)
             .padding(horizontal = 12.dp, vertical = 8.dp)
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier,
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             DockTab(
                 icon = Icons.Default.Search,

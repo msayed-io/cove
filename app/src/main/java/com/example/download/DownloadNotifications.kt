@@ -200,17 +200,7 @@ object DownloadNotifications {
             val remoteViews = RemoteViews(context.packageName, R.layout.notification_custom_complete)
             remoteViews.setTextViewText(R.id.notification_title, title)
             remoteViews.setTextViewText(R.id.notification_subtext, "اكتمل التنزيل، انقر للتحقق")
-            remoteViews.setTextViewText(
-                R.id.notification_time,
-                SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
-            )
-
             val thumbnailBitmap = mediaThumbnail(localUriString)
-            if (thumbnailBitmap != null) {
-                remoteViews.setImageViewBitmap(R.id.notification_thumbnail, roundedBitmap(thumbnailBitmap, 24))
-            } else {
-                remoteViews.setImageViewResource(R.id.notification_thumbnail, R.mipmap.ic_launcher)
-            }
             remoteViews.setImageViewResource(R.id.notification_status_icon, R.drawable.ic_green_check_circle)
 
             val builder = NotificationCompat.Builder(context, CHANNEL_COMPLETE)

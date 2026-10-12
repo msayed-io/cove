@@ -281,7 +281,7 @@ fun ShareBottomSheetFlow(
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.End
+                horizontalArrangement = Arrangement.Start
             ) {
                 Text(
                     text = "تنزيل الوسائط",
@@ -362,7 +362,7 @@ fun ShareBottomSheetFlow(
                                 }
                                 .padding(vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.End
+                            horizontalArrangement = Arrangement.Start
                         ) {
                             Text(
                                 text = "تم تحديد الكل",
