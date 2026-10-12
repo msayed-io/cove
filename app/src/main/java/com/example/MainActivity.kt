@@ -946,7 +946,8 @@ fun MainScreen(viewModel: DownloadViewModel, searchViewModel: SearchViewModel, m
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    .navigationBarsPadding(),
+                    .navigationBarsPadding()
+                    .padding(bottom = 24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 MiniPlayer(

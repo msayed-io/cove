@@ -38,6 +38,18 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AllInclusive
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -56,7 +68,6 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -194,9 +205,7 @@ fun CobaltHome(
                 Spacer(Modifier.height(20.dp))
             }
 
-            // 4) البطاقة الزجاجية الكبرى
-            CobaltFeatureCard(quickMode = quickMode, onModeChange = { quickMode = it })
-            Spacer(Modifier.height(20.dp))
+            // 4) [أُزيلت البطاقة الكبرى الدائمة — المعاينة تظهر عند لصق رابط]
 
             // 5) زر الإجراء + الشروط
             CobaltCta(
@@ -229,7 +238,7 @@ private fun CobaltTopBar(onClose: () -> Unit) {
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Icon(
-                painter = painterResource(R.drawable.ic_cove_infinity),
+                imageVector = Icons.Default.AllInclusive,
                 contentDescription = null,
                 tint = CG.TextPrimary,
                 modifier = Modifier.size(28.dp)
@@ -259,7 +268,7 @@ private fun CobaltTopBar(onClose: () -> Unit) {
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    painter = painterResource(R.drawable.ic_close_x),
+                    imageVector = Icons.Default.Close,
                     contentDescription = "إغلاق",
                     tint = CG.Slate300,
                     modifier = Modifier.size(16.dp)
@@ -343,7 +352,7 @@ private fun CobaltSearchBar(
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    painter = painterResource(R.drawable.ic_search_lens),
+                    imageVector = Icons.Default.Search,
                     contentDescription = "بحث",
                     tint = Color.White,
                     modifier = Modifier.size(16.dp)
@@ -383,7 +392,7 @@ private fun CobaltSearchBar(
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    painter = painterResource(R.drawable.ic_clipboard_paste),
+                    imageVector = Icons.Default.ContentPaste,
                     contentDescription = "لصق",
                     tint = CG.TextMuted,
                     modifier = Modifier.size(16.dp)
@@ -417,76 +426,6 @@ private fun CobaltSearchBar(
 // ----------------------------------------------------------------------------
 // البطاقة الزجاجية الكبرى
 // ----------------------------------------------------------------------------
-@Composable
-private fun CobaltFeatureCard(quickMode: QuickMode, onModeChange: (QuickMode) -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(CG.RadiusCard))
-            .background(CG.CardAlpha)
-            .border(1.dp, Color.White.copy(alpha = 0.09f), RoundedCornerShape(CG.RadiusCard))
-            .padding(20.dp)
-    ) {
-        // المفتاح المقسم
-        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-            Row(
-                modifier = Modifier
-                    .clip(CircleShape)
-                    .background(CG.SegTrack)
-                    .border(1.dp, Color.White.copy(alpha = 0.08f), CircleShape)
-                    .padding(4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                SegmentedPill(
-                    label = stringResource(R.string.feature_toggle_4k),
-                    active = quickMode == QuickMode.UHD,
-                    onClick = { onModeChange(QuickMode.UHD) }
-                )
-                SegmentedPill(
-                    label = stringResource(R.string.feature_toggle_mp3),
-                    active = quickMode == QuickMode.MP3,
-                    onClick = { onModeChange(QuickMode.MP3) }
-                )
-            }
-        }
-        Spacer(Modifier.height(20.dp))
-
-        FeatureRow(
-            title = stringResource(R.string.feature_title_1),
-            desc = stringResource(R.string.feature_desc_1),
-            badge = FeatureBadge.LOCK,
-            divider = true
-        )
-        FeatureRow(
-            title = stringResource(R.string.feature_title_2),
-            desc = stringResource(R.string.feature_desc_2),
-            badge = FeatureBadge.LOCK,
-            divider = true
-        )
-        FeatureRow(
-            title = stringResource(R.string.feature_title_3),
-            desc = stringResource(R.string.feature_desc_3),
-            badge = FeatureBadge.CHECK,
-            divider = true
-        )
-        FeatureRow(
-            title = stringResource(R.string.feature_title_4),
-            desc = stringResource(R.string.feature_desc_4),
-            badge = FeatureBadge.CHECK,
-            divider = false
-        )
-
-        Box(modifier = Modifier.fillMaxWidth().padding(top = 16.dp), contentAlignment = Alignment.Center) {
-            Text(
-                text = stringResource(R.string.feature_card_footer),
-                color = CG.TextDim,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Medium,
-                fontFamily = CoveArabic
-            )
-        }
-    }
-}
 
 @Composable
 private fun SegmentedPill(label: String, active: Boolean, onClick: () -> Unit) {
@@ -514,57 +453,6 @@ private fun SegmentedPill(label: String, active: Boolean, onClick: () -> Unit) {
 
 private enum class FeatureBadge { LOCK, CHECK }
 
-@Composable
-private fun FeatureRow(title: String, desc: String, badge: FeatureBadge, divider: Boolean) {
-    Column {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(bottom = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Column(modifier = Modifier.weight(1f).padding(start = 0.dp, end = 12.dp)) {
-                Text(
-                    text = title,
-                    color = CG.TextPrimary,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    letterSpacing = 0.025.sp,
-                    fontFamily = CoveArabic
-                )
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    text = desc,
-                    color = CG.TextMuted,
-                    fontSize = 12.sp,
-                    lineHeight = 18.sp,
-                    fontFamily = CoveArabic
-                )
-            }
-            Box(
-                modifier = Modifier
-                    .size(28.dp)
-                    .clip(CircleShape)
-                    .background(if (badge == FeatureBadge.LOCK) CG.BadgeLockBg else CG.BadgeCheckBg)
-                    .border(
-                        1.dp,
-                        if (badge == FeatureBadge.LOCK) Color.White.copy(alpha = 0.10f) else CG.BadgeCheckBorder,
-                        CircleShape
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    painter = painterResource(if (badge == FeatureBadge.LOCK) R.drawable.ic_lock_glyph else R.drawable.ic_check_mark),
-                    contentDescription = null,
-                    tint = if (badge == FeatureBadge.LOCK) CG.Slate300 else CG.CobaltGlow,
-                    modifier = Modifier.size(if (badge == FeatureBadge.LOCK) 14.dp else 16.dp)
-                )
-            }
-        }
-        if (divider) {
-            Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.05f)))
-        }
-    }
-}
 
 // ----------------------------------------------------------------------------
 // زر الإجراء + الشروط
@@ -630,7 +518,7 @@ fun CobaltPermissionCard(onRequest: () -> Unit) {
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                painter = painterResource(R.drawable.ic_folder_files),
+                imageVector = Icons.Default.FolderOpen,
                 contentDescription = null,
                 tint = CG.CobaltGlow,
                 modifier = Modifier.size(20.dp)
@@ -692,7 +580,7 @@ private fun CobaltErrorCard(message: String) {
             modifier = Modifier.size(36.dp).clip(CircleShape).background(CG.ErrorContainer),
             contentAlignment = Alignment.Center
         ) {
-            Icon(painter = painterResource(R.drawable.ic_close_x), contentDescription = null, tint = CG.Error, modifier = Modifier.size(16.dp))
+            Icon(imageVector = Icons.Default.Error, contentDescription = null, tint = CG.Error, modifier = Modifier.size(16.dp))
         }
         Spacer(Modifier.width(12.dp))
         Text(message, color = CG.Error, fontSize = 13.sp, fontFamily = CoveArabic, modifier = Modifier.weight(1f))
@@ -796,7 +684,7 @@ fun CoveDock(currentTab: ScreenTab, onTabSelected: (ScreenTab) -> Unit, modifier
         modifier = modifier
             .widthIn(max = 320.dp)
             .clip(CircleShape)
-            .background(CG.Dock)
+            .background(Color(0xFF0D111A))
             .border(1.dp, Color.White.copy(alpha = 0.12f), CircleShape)
             .padding(horizontal = 12.dp, vertical = 8.dp)
     ) {
@@ -806,18 +694,18 @@ fun CoveDock(currentTab: ScreenTab, onTabSelected: (ScreenTab) -> Unit, modifier
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             DockTab(
-                icon = R.drawable.ic_search_dock,
+                icon = Icons.Default.Search,
                 label = stringResource(R.string.tab_search),
                 active = currentTab == ScreenTab.DOWNLOAD,
                 onClick = { onTabSelected(ScreenTab.DOWNLOAD) }
             )
             DockIcon(
-                icon = R.drawable.ic_globe_browser,
+                icon = Icons.Default.Language,
                 active = currentTab == ScreenTab.BROWSER,
                 onClick = { onTabSelected(ScreenTab.BROWSER) }
             )
             DockIcon(
-                icon = R.drawable.ic_folder_files,
+                icon = Icons.Default.Folder,
                 active = currentTab == ScreenTab.HISTORY,
                 onClick = { onTabSelected(ScreenTab.HISTORY) }
             )
@@ -826,7 +714,7 @@ fun CoveDock(currentTab: ScreenTab, onTabSelected: (ScreenTab) -> Unit, modifier
 }
 
 @Composable
-private fun DockTab(icon: Int, label: String, active: Boolean, onClick: () -> Unit) {
+private fun DockTab(icon: ImageVector, label: String, active: Boolean, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .clip(CircleShape)
@@ -837,7 +725,7 @@ private fun DockTab(icon: Int, label: String, active: Boolean, onClick: () -> Un
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Icon(painter = painterResource(icon), contentDescription = label, tint = if (active) CG.CobaltGlow else CG.TextMuted, modifier = Modifier.size(16.dp))
+        Icon(imageVector = icon, contentDescription = label, tint = if (active) CG.CobaltGlow else CG.TextMuted, modifier = Modifier.size(16.dp))
         if (active) {
             Text(label, color = CG.CobaltGlow, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, fontFamily = CoveArabic)
         }
@@ -845,7 +733,7 @@ private fun DockTab(icon: Int, label: String, active: Boolean, onClick: () -> Un
 }
 
 @Composable
-private fun DockIcon(icon: Int, active: Boolean, onClick: () -> Unit) {
+private fun DockIcon(icon: ImageVector, active: Boolean, onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .size(40.dp)
@@ -854,6 +742,6 @@ private fun DockIcon(icon: Int, active: Boolean, onClick: () -> Unit) {
             .pressClickEffect(onClick),
         contentAlignment = Alignment.Center
     ) {
-        Icon(painter = painterResource(icon), contentDescription = null, tint = if (active) CG.CobaltGlow else CG.TextMuted, modifier = Modifier.size(16.dp))
+        Icon(imageVector = icon, contentDescription = null, tint = if (active) CG.CobaltGlow else CG.TextMuted, modifier = Modifier.size(16.dp))
     }
 }
