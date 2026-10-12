@@ -13,9 +13,7 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.*
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.ui.input.pointer.awaitPointerEventScope
-import androidx.compose.ui.input.pointer.forEachGesture
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.input.pointer.pointerInput
@@ -696,22 +694,20 @@ private fun CoveSeekBar(
         modifier = modifier
             .height(28.dp)
             .pointerInput(Unit) {
-                forEachGesture {
-                    awaitPointerEventScope {
-                        val down = awaitFirstDown()
-                        down.consume()
+                detectHorizontalDragGestures(
+                    onDragStart = { offset ->
                         dragging = true
                         val w = size.width.toFloat()
-                        onSeek((down.position.x / w).coerceIn(0f, 1f))
-                        do {
-                            val event = awaitPointerEvent()
-                            event.changes.forEach { it.consume() }
-                            val x = event.changes.first().position.x
-                            onSeek((x / w).coerceIn(0f, 1f))
-                        } while (event.changes.any { it.pressed })
-                        dragging = false
+                        onSeek((offset.x / w).coerceIn(0f, 1f))
+                    },
+                    onDragEnd = { dragging = false },
+                    onDragCancel = { dragging = false },
+                    onHorizontalDrag = { change, _ ->
+                        change.consume()
+                        val w = size.width.toFloat()
+                        onSeek((change.position.x / w).coerceIn(0f, 1f))
                     }
-                }
+                )
             }
     ) {
         val w = constraints.maxWidth.toFloat()
