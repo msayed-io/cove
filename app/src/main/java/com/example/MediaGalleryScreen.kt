@@ -163,7 +163,8 @@ internal fun LocalMediaGalleryScreen(
         when (currentKind) {
             DownloadedMediaKind.VIDEO, DownloadedMediaKind.AUDIO -> {
                 val mediaUri = Uri.fromFile(File(path))
-                if (player != null && player.currentMediaItem?.localConfiguration?.uri != mediaUri) {
+                val activePlayer = player
+                if (activePlayer != null && activePlayer.currentMediaItem?.localConfiguration?.uri != mediaUri) {
                     playerViewModel.playLocalFile(mediaUri, currentItem.title)
                 }
             }
