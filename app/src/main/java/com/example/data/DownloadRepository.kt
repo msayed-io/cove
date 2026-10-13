@@ -794,6 +794,9 @@ class DownloadRepository {
                 }
 
                 val body = response.body ?: throw DownloadException(false, "محتوى الملف فارغ")
+                if (isVideo && !isAudioOnly && body.contentType()?.type?.equals("image", ignoreCase = true) == true) {
+                    throw DownloadException(false, "رفض الخادم ملف صورة عند طلب فيديو؛ لم يتم حفظه كفيديو.")
+                }
 
                 val isResuming = response.code == 206 && existingBytes > 0L
                 if (!isResuming) {
@@ -1123,6 +1126,7 @@ class DownloadRepository {
         val patterns = listOf(
             Pattern.compile("instagram\\.com/p/([^/?#]+)", Pattern.CASE_INSENSITIVE),
             Pattern.compile("instagram\\.com/reel/([^/?#]+)", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("instagram\\.com/reels/([^/?#]+)", Pattern.CASE_INSENSITIVE),
             Pattern.compile("instagram\\.com/tv/([^/?#]+)", Pattern.CASE_INSENSITIVE)
         )
         for (pattern in patterns) {
@@ -1148,141 +1152,63 @@ class DownloadRepository {
         return null
     }
 
-    private fun fetchInstagramEmbedMedia(shortcode: String): com.example.domain.ScrapedMedia? {
-        try {
-            val embedUrl = "https://www.instagram.com/p/$shortcode/embed/"
-            val client = com.example.api.NetworkModule.okHttpClient
-            val request = Request.Builder()
-                .url(embedUrl)
-                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36")
-                .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
-                .header("Accept-Language", "en-US,en;q=0.5")
-                .build()
-                
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return null
-                val html = response.body?.string() ?: return null
-                
-                val hasVideoMeta = html.contains("property=\"og:video\"") || html.contains("property='og:video'") || html.contains("name=\"og:video\"") || html.contains("name='og:video'") || html.contains("og:video:secure_url") || html.contains("og:video:url")
-                val hasIsVideoTrue = html.contains("\"is_video\":true") || html.contains("\"is_video\": true") || html.contains("'is_video':true") || html.contains("'is_video': true")
-                val isVideo = hasVideoMeta || hasIsVideoTrue
+    private fun fetchInstagramPageMedia(pageUrl: String, shortcode: String): com.example.domain.ScrapedMedia? =
+        fetchSocialPostPageMedia(pageUrl, shortcode, isThreads = false)
 
-                var videoUrl: String? = null
-                if (isVideo) {
-                    videoUrl = findMetaTag(html, "og:video") ?: findMetaTag(html, "og:video:secure_url")
-                    if (videoUrl == null || videoUrl.isEmpty()) {
-                        val videoPattern = Pattern.compile("\"video_url\"\\s*:\\s*\"([^\"]+)\"")
-                        val m = videoPattern.matcher(html)
-                        if (m.find()) {
-                            videoUrl = m.group(1).replace("\\u0026", "&")
-                        }
-                    }
-                }
-                
-                var imageUrl = findMetaTag(html, "og:image") ?: findMetaTag(html, "og:image:secure_url")
-                if (imageUrl == null || imageUrl.isEmpty()) {
-                    val imgPattern = Pattern.compile("\"display_url\"\\s*:\\s*\"([^\"]+)\"")
-                    val m = imgPattern.matcher(html)
-                    if (m.find()) {
-                        imageUrl = m.group(1).replace("\\u0026", "&")
-                    }
-                }
-                if (imageUrl == null || imageUrl.isEmpty()) {
-                    val classPattern = Pattern.compile("EmbeddedMediaImage[^>]*src=\"([^\"]+)\"")
-                    val m = classPattern.matcher(html)
-                    if (m.find()) {
-                        imageUrl = m.group(1).replace("&amp;", "&")
-                    }
-                }
-                
-                if (imageUrl.isNullOrEmpty() && (!isVideo || videoUrl.isNullOrEmpty())) {
+    private fun fetchThreadsPageMedia(pageUrl: String, postCode: String): com.example.domain.ScrapedMedia? =
+        fetchSocialPostPageMedia(pageUrl, postCode, isThreads = true)
+
+    /** Reads the canonical post page and resolves its structured, per-item media JSON. */
+    private fun fetchSocialPostPageMedia(
+        pageUrl: String,
+        postCode: String,
+        isThreads: Boolean
+    ): com.example.domain.ScrapedMedia? {
+        val platformTitle = if (isThreads) "ثريدز - $postCode" else "انستجرام - $postCode"
+        try {
+            val request = Request.Builder()
+                .url(pageUrl.trim())
+                .header(
+                    "User-Agent",
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
+                )
+                .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                .header("Sec-Fetch-Mode", "navigate")
+                .build()
+
+            com.example.api.NetworkModule.okHttpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Log.w("DownloadRepository", "Social post page returned HTTP ${response.code} for $postCode")
                     return null
                 }
-                
-                val finalUrl = if (isVideo) videoUrl!! else imageUrl!!
-                
+                val html = response.body?.string() ?: return null
+                val resolvedItems = if (isThreads) {
+                    SocialMediaPostResolver.resolveThreadsPage(html, postCode)
+                } else {
+                    SocialMediaPostResolver.resolveInstagramPage(html, postCode)
+                } ?: return null
+
+                val items = resolvedItems.mapIndexed { index, item ->
+                    val itemTitle = if (resolvedItems.size > 1) "$platformTitle ${index + 1}" else platformTitle
+                    com.example.domain.ScrapedItem(
+                        url = item.url,
+                        isVideo = item.isVideo,
+                        thumbnailUrl = item.thumbnailUrl,
+                        title = itemTitle
+                    )
+                }
+                val first = items.firstOrNull() ?: return null
                 return com.example.domain.ScrapedMedia(
-                    title = "انستجرام - $shortcode",
-                    mediaUrl = finalUrl,
-                    isVideo = isVideo,
-                    thumbnailUrl = imageUrl ?: "",
-                    sourceUrl = "https://www.instagram.com/p/$shortcode/",
-                    items = listOf(com.example.domain.ScrapedItem(
-                        url = finalUrl,
-                        isVideo = isVideo,
-                        thumbnailUrl = imageUrl ?: "",
-                        title = "انستجرام - $shortcode"
-                    ))
+                    title = platformTitle,
+                    mediaUrl = first.url,
+                    isVideo = first.isVideo,
+                    thumbnailUrl = first.thumbnailUrl,
+                    sourceUrl = pageUrl,
+                    items = items
                 )
             }
         } catch (e: Exception) {
-            Log.e("DownloadRepository", "Instagram embed scraper failed for $shortcode", e)
-        }
-        return null
-    }
-
-    private fun fetchThreadsEmbedMedia(postId: String): com.example.domain.ScrapedMedia? {
-        try {
-            val embedUrl = "https://www.threads.net/t/$postId/embed/"
-            val client = com.example.api.NetworkModule.okHttpClient
-            val request = Request.Builder()
-                .url(embedUrl)
-                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36")
-                .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
-                .header("Accept-Language", "en-US,en;q=0.5")
-                .build()
-                
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return null
-                val html = response.body?.string() ?: return null
-                
-                val hasVideoMeta = html.contains("property=\"og:video\"") || html.contains("property='og:video'") || html.contains("name=\"og:video\"") || html.contains("name='og:video'") || html.contains("og:video:secure_url") || html.contains("og:video:url")
-                val hasIsVideoTrue = html.contains("\"is_video\":true") || html.contains("\"is_video\": true") || html.contains("'is_video':true") || html.contains("'is_video': true")
-                val isVideo = hasVideoMeta || hasIsVideoTrue
-
-                var videoUrl: String? = null
-                if (isVideo) {
-                    videoUrl = findMetaTag(html, "og:video") ?: findMetaTag(html, "og:video:secure_url")
-                    if (videoUrl == null || videoUrl.isEmpty()) {
-                        val videoPattern = Pattern.compile("\"video_url\"\\s*:\\s*\"([^\"]+)\"")
-                        val m = videoPattern.matcher(html)
-                        if (m.find()) {
-                            videoUrl = m.group(1).replace("\\u0026", "&")
-                        }
-                    }
-                }
-                
-                var imageUrl = findMetaTag(html, "og:image") ?: findMetaTag(html, "og:image:secure_url")
-                if (imageUrl == null || imageUrl.isEmpty()) {
-                    val imgPattern = Pattern.compile("\"display_url\"\\s*:\\s*\"([^\"]+)\"")
-                    val m = imgPattern.matcher(html)
-                    if (m.find()) {
-                        imageUrl = m.group(1).replace("\\u0026", "&")
-                    }
-                }
-                
-                if (imageUrl.isNullOrEmpty() && (!isVideo || videoUrl.isNullOrEmpty())) {
-                    return null
-                }
-                
-                val finalUrl = if (isVideo) videoUrl!! else imageUrl!!
-                
-                return com.example.domain.ScrapedMedia(
-                    title = "ثريدز - $postId",
-                    mediaUrl = finalUrl,
-                    isVideo = isVideo,
-                    thumbnailUrl = imageUrl ?: "",
-                    sourceUrl = "https://www.threads.net/t/$postId",
-                    items = listOf(com.example.domain.ScrapedItem(
-                        url = finalUrl,
-                        isVideo = isVideo,
-                        thumbnailUrl = imageUrl ?: "",
-                        title = "ثريدز - $postId"
-                    ))
-                )
-            }
-        } catch (e: Exception) {
-            Log.e("DownloadRepository", "Threads embed scraper failed for $postId", e)
+            Log.e("DownloadRepository", "${if (isThreads) "Threads" else "Instagram"} page resolver failed for $postCode", e)
         }
         return null
     }
@@ -1327,23 +1253,21 @@ class DownloadRepository {
             )
         }
 
-        // 2. High-reliability embed scraper for Instagram & Threads
-        if (lowerUrl.contains("instagram.com")) {
+        val isInstagramUrl = lowerUrl.contains("instagram.com")
+        val isThreadsUrl = lowerUrl.contains("threads.net") || lowerUrl.contains("threads.com")
+
+        // 2. Resolve public Instagram/Threads posts from the canonical page JSON.
+        // Media type is decided per post/carousel item; a video cover is never used as its file.
+        if (isInstagramUrl) {
             val shortcode = extractInstagramShortcode(url)
             if (shortcode != null) {
-                val media = fetchInstagramEmbedMedia(shortcode)
-                if (media != null) {
-                    return@withContext media
-                }
+                fetchInstagramPageMedia(url, shortcode)?.let { return@withContext it }
             }
         }
-        if (lowerUrl.contains("threads.net") || lowerUrl.contains("threads.com")) {
-            val postId = extractThreadsPostId(url)
-            if (postId != null) {
-                val media = fetchThreadsEmbedMedia(postId)
-                if (media != null) {
-                    return@withContext media
-                }
+        if (isThreadsUrl) {
+            val postCode = extractThreadsPostId(url)
+            if (postCode != null) {
+                fetchThreadsPageMedia(url, postCode)?.let { return@withContext it }
             }
         }
 
@@ -1410,7 +1334,7 @@ class DownloadRepository {
         }
 
         // 4. Try fast HTML scraper for non-YouTube URLs (Facebook, Twitter, etc.)
-        if (!isYouTube) {
+        if (!isYouTube && !isInstagramUrl && !isThreadsUrl) {
             val fastMedia = fetchMediaInfoFast(url)
             if (fastMedia != null) {
                 Log.d("DownloadRepository", "Fast media scraper succeeded for $url")
@@ -1443,24 +1367,15 @@ class DownloadRepository {
         } catch (e: Exception) {
             Log.e("DownloadRepository", "Failed to fetch media info for url: $url", e)
             
-            // Final Graceful Fallback for Instagram & Threads
-            if (lowerUrl.contains("instagram.com") || lowerUrl.contains("threads.net") || lowerUrl.contains("threads.com")) {
-                val isInstagram = lowerUrl.contains("instagram.com")
-                val platformName = if (isInstagram) "انستجرام" else "ثريدز"
-                val guessedTitle = "وسائط من $platformName"
-                
-                val isVideoPost = lowerUrl.contains("/reel") || lowerUrl.contains("/tv") || lowerUrl.contains("/reels") || lowerUrl.contains("/t/")
-                
-                return@withContext com.example.domain.ScrapedMedia(
-                    title = guessedTitle,
-                    mediaUrl = url,
-                    isVideo = isVideoPost,
-                    thumbnailUrl = "",
-                    sourceUrl = url,
-                    items = listOf(com.example.domain.ScrapedItem(url, isVideoPost, "", guessedTitle))
-                )
+            // If both the structured page resolver and the existing extractor fail,
+            // do not guess from a URL shape or save a cover image under a video extension.
+            if (isInstagramUrl) {
+                throw Exception("تعذر استخراج ملف الوسائط الأصلي من Instagram. تأكد أن المنشور عام ثم أعد المحاولة.")
             }
-            
+            if (isThreadsUrl) {
+                throw Exception("تعذر استخراج ملف الوسائط الأصلي من Threads. تأكد أن المنشور عام ثم أعد المحاولة.")
+            }
+
             val msg = e.message ?: ""
             if (msg.contains("Unsupported URL") || msg.contains("generic information extractor")) {
                 throw Exception("الرابط غير مدعوم أو لا يحتوي على وسائط قابلة للتنزيل.")
