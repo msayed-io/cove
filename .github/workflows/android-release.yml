@@ -114,6 +114,17 @@ jobs:
           echo "apk=$apk" >> "$GITHUB_OUTPUT"
           echo "aab=$aab" >> "$GITHUB_OUTPUT"
 
+      - name: Upload release artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cove-${{ steps.version.outputs.tag }}
+          path: |
+            app/build/outputs/apk/release/Cove.apk
+            app/build/outputs/bundle/release/Cove.aab
+            ${{ runner.temp }}/${{ steps.version.outputs.tag }}.sha256
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Commit version for release
         id: version_commit
         shell: bash
@@ -128,17 +139,6 @@ jobs:
           git commit -m "chore(release): v${VERSION_NAME}"
           git push origin HEAD:main
           echo "release_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-
-      - name: Upload release artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: cove-${{ steps.version.outputs.tag }}
-          path: |
-            app/build/outputs/apk/release/Cove.apk
-            app/build/outputs/bundle/release/Cove.aab
-            ${{ runner.temp }}/${{ steps.version.outputs.tag }}.sha256
-          if-no-files-found: error
-          retention-days: 30
 
       - name: Create GitHub Release
         env:
