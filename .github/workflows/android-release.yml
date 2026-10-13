@@ -1,6 +1,8 @@
 name: Android Release
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       bump:
@@ -48,30 +50,12 @@ jobs:
         id: version
         shell: bash
         env:
-          BUMP: ${{ inputs.bump }}
+          BUMP: ${{ github.event_name == 'workflow_dispatch' && inputs.bump || 'patch' }}
         run: |
           set -euo pipefail
           python3 scripts/bump_android_version.py --bump "$BUMP" | tee "$RUNNER_TEMP/version.env"
           cat "$RUNNER_TEMP/version.env" >> "$GITHUB_OUTPUT"
-          echo "Preparing release ${{ inputs.bump }}"
-
-      - name: Commit version and create tag
-        id: tag
-        shell: bash
-        env:
-          VERSION_NAME: ${{ steps.version.outputs.version_name }}
-          TAG: ${{ steps.version.outputs.tag }}
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app/build.gradle.kts
-          git diff --cached --quiet && { echo "Version file was not changed" >&2; exit 1; }
-          git commit -m "chore(release): v${VERSION_NAME}"
-          git tag -a "$TAG" -m "Cove v${VERSION_NAME}"
-          git push origin HEAD:main
-          git push origin "$TAG"
-          echo "release_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "Preparing release $BUMP"
 
       - name: Materialize signing keystore
         id: signing
@@ -126,6 +110,24 @@ jobs:
           sha256sum "$apk" "$aab" | tee "$RUNNER_TEMP/${TAG}.sha256"
           echo "apk=$apk" >> "$GITHUB_OUTPUT"
           echo "aab=$aab" >> "$GITHUB_OUTPUT"
+
+      - name: Commit version and create tag
+        id: tag
+        shell: bash
+        env:
+          VERSION_NAME: ${{ steps.version.outputs.version_name }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/build.gradle.kts
+          git diff --cached --quiet && { echo "Version file was not changed" >&2; exit 1; }
+          git commit -m "chore(release): v${VERSION_NAME}"
+          git tag -a "$TAG" -m "Cove v${VERSION_NAME}"
+          git push origin HEAD:main
+          git push origin "$TAG"
+          echo "release_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Upload release artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

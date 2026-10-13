@@ -15,10 +15,12 @@ def main() -> None:
 
     path = Path(args.file)
     text = path.read_text(encoding="utf-8")
-    code_match = re.search(r"(?m)^(\s*versionCode\s*=\s*)(\d+)(\s*)$", text)
-    name_match = re.search(r'(?m)^(\s*versionName\s*=\s*")([0-9]+)\.([0-9]+)\.([0-9]+)("\s*)$', text)
+    # The Gradle file supports -P overrides, so update the final numeric/string
+    # fallback on each assignment rather than requiring a literal assignment.
+    code_match = re.search(r"(?m)^(\s*versionCode\s*=\s*.*?)(\d+)(\s*)$", text)
+    name_match = re.search(r'(?m)^(\s*versionName\s*=\s*.*?")([0-9]+)\.([0-9]+)\.([0-9]+)("\s*)$', text)
     if not code_match or not name_match:
-        raise SystemExit("Could not find integer versionCode and SemVer versionName")
+        raise SystemExit("Could not find versionCode and SemVer versionName fallback values")
 
     major, minor, patch = map(int, name_match.group(2, 3, 4))
     if args.bump == "major":
@@ -32,7 +34,7 @@ def main() -> None:
 
     updated = text[: code_match.start(2)] + str(version_code) + text[code_match.end(2) :]
     # Re-find the versionName in the text after the versionCode replacement.
-    name_match = re.search(r'(?m)^(\s*versionName\s*=\s*")([0-9]+)\.([0-9]+)\.([0-9]+)("\s*)$', updated)
+    name_match = re.search(r'(?m)^(\s*versionName\s*=\s*.*?")([0-9]+)\.([0-9]+)\.([0-9]+)("\s*)$', updated)
     assert name_match is not None
     updated = updated[: name_match.start(2)] + version_name + updated[name_match.end(4) :]
     path.write_text(updated, encoding="utf-8")
