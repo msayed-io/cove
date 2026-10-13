@@ -314,6 +314,10 @@ fun MainScreen(viewModel: DownloadViewModel, searchViewModel: SearchViewModel, m
     var currentTab by remember { mutableStateOf(ScreenTab.DOWNLOAD) }
     var showDownloadStartedDialog by remember { mutableStateOf(false) }
     val showFullPlayer by playerViewModel.showFullPlayer.collectAsState()
+    val currentPlayerMediaItem by playerViewModel.currentMediaItem.collectAsState()
+    val currentPlaybackIsLocal = currentPlayerMediaItem?.localConfiguration?.uri?.scheme == "file"
+    var localGalleryLaunch by remember { mutableStateOf<MediaGalleryLaunch?>(null) }
+    var isLocalGalleryVisible by remember { mutableStateOf(false) }
 
     val searchQuery by searchViewModel.query.collectAsState()
     var fileSearchQuery by remember { mutableStateOf("") }
@@ -655,10 +659,11 @@ fun MainScreen(viewModel: DownloadViewModel, searchViewModel: SearchViewModel, m
 
                         val filteredDownloads = remember(downloads, selectedFileTab, fileSearchQuery) {
                             downloads.filter { item ->
+                                val kind = downloadedMediaKind(item)
                                 val matchesCategory = when (selectedFileTab) {
-                                    "فيديو" -> item.isVideo
-                                    "صوت" -> !item.isVideo && (item.localUri?.endsWith(".m4a") == true || item.localUri?.endsWith(".mp3") == true || item.title.contains("(صوت)"))
-                                    "صور" -> item.localUri?.endsWith(".jpg") == true || item.localUri?.endsWith(".png") == true
+                                    "فيديو" -> kind == DownloadedMediaKind.VIDEO
+                                    "صوت" -> kind == DownloadedMediaKind.AUDIO
+                                    "صور" -> kind == DownloadedMediaKind.IMAGE
                                     else -> true
                                 }
                                 val matchesSearch = item.title.contains(fileSearchQuery, ignoreCase = true)
@@ -673,6 +678,22 @@ fun MainScreen(viewModel: DownloadViewModel, searchViewModel: SearchViewModel, m
 
                         val completedList = filteredDownloads.filter { item ->
                             item.progress == 1f || item.statusText.contains("بنجاح")
+                        }
+
+                        val openDownloadedGallery: (DownloadItem) -> Unit = { tappedItem ->
+                            val galleryItems = completedList
+                                .filter { candidate ->
+                                    val path = candidate.localUri
+                                    path != null &&
+                                        downloadedMediaKind(candidate) != DownloadedMediaKind.UNKNOWN &&
+                                        runCatching { File(path).isFile }.getOrDefault(false)
+                                }
+                                .sortedByDescending { it.timestamp }
+                            if (galleryItems.any { it.id == tappedItem.id }) {
+                                playerViewModel.setShowFullPlayer(false)
+                                localGalleryLaunch = MediaGalleryLaunch(galleryItems, tappedItem.id)
+                                isLocalGalleryVisible = true
+                            }
                         }
 
                         LazyColumn(
@@ -909,7 +930,8 @@ fun MainScreen(viewModel: DownloadViewModel, searchViewModel: SearchViewModel, m
                                         DownloadHistoryItemCard(
                                             item = item,
                                             context = context,
-                                            downloadViewModel = viewModel
+                                            downloadViewModel = viewModel,
+                                            onOpenGallery = openDownloadedGallery
                                         )
                                     }
                                 }
@@ -927,7 +949,8 @@ fun MainScreen(viewModel: DownloadViewModel, searchViewModel: SearchViewModel, m
                                         DownloadHistoryItemCard(
                                             item = item,
                                             context = context,
-                                            downloadViewModel = viewModel
+                                            downloadViewModel = viewModel,
+                                            onOpenGallery = openDownloadedGallery
                                         )
                                     }
                                 }
@@ -949,7 +972,13 @@ fun MainScreen(viewModel: DownloadViewModel, searchViewModel: SearchViewModel, m
             ) {
                 MiniPlayer(
                     viewModel = playerViewModel,
-                    onClick = { playerViewModel.setShowFullPlayer(true) }
+                    onClick = {
+                        if (currentPlaybackIsLocal && localGalleryLaunch != null) {
+                            isLocalGalleryVisible = true
+                        } else {
+                            playerViewModel.setShowFullPlayer(true)
+                        }
+                    }
                 )
                 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -967,6 +996,22 @@ fun MainScreen(viewModel: DownloadViewModel, searchViewModel: SearchViewModel, m
                 downloadViewModel = viewModel,
                 onClose = { playerViewModel.setShowFullPlayer(false) }
             )
+        }
+
+        if (isLocalGalleryVisible) {
+            localGalleryLaunch?.let { launch ->
+                LocalMediaGalleryScreen(
+                    items = launch.items,
+                    initialItemId = launch.initialItemId,
+                    playerViewModel = playerViewModel,
+                    onClose = { isLocalGalleryVisible = false },
+                    onCurrentItemChanged = { itemId ->
+                        if (localGalleryLaunch?.initialItemId != itemId) {
+                            localGalleryLaunch = launch.copy(initialItemId = itemId)
+                        }
+                    }
+                )
+            }
         }
 
         // Ultra-polished compact started download overlay with fully rounded edges
@@ -1110,14 +1155,13 @@ fun EmptyHistoryCard() {
 
 @Composable
 fun DownloadHistoryItemCard(
-    item: DownloadItem, 
+    item: DownloadItem,
     context: Context,
     downloadViewModel: DownloadViewModel = viewModel(),
-    playerViewModel: PlayerViewModel = viewModel()
+    onOpenGallery: (DownloadItem) -> Unit
 ) {
     val isCompleted = item.progress == 1f || item.statusText.contains("بنجاح")
     var showDeleteConfirm by remember { mutableStateOf(false) }
-    val downloads by downloadViewModel.downloads.collectAsState()
     val mediaThumb = rememberMediaThumbnail(item.localUri)
 
     // Read real file size
@@ -1143,17 +1187,13 @@ fun DownloadHistoryItemCard(
         }
     }
 
-    // Determine format badge details
-    val (formatText, badgeColor) = remember(item.localUri, item.isVideo) {
-        if (item.isVideo) {
-            Pair("MP4", OmniGetDesignTokens.Accent)
-        } else {
-            if (item.localUri?.endsWith(".jpg", true) == true || item.localUri?.endsWith(".png", true) == true) {
-                Pair("JPG", OmniGetDesignTokens.TextSecondary)
-            } else {
-                Pair("MP3", OmniGetDesignTokens.Accent)
-            }
-        }
+    // Label and category come from the local file type, not the card's click path.
+    val mediaKind = remember(item.localUri, item.isVideo) { downloadedMediaKind(item) }
+    val formatText = remember(item.localUri, item.isVideo) { downloadedMediaFormat(item) }
+    val badgeColor = when (mediaKind) {
+        DownloadedMediaKind.IMAGE -> OmniGetDesignTokens.TextSecondary
+        DownloadedMediaKind.VIDEO, DownloadedMediaKind.AUDIO -> OmniGetDesignTokens.Accent
+        DownloadedMediaKind.UNKNOWN -> OmniGetDesignTokens.TextMuted
     }
 
     Box(
@@ -1161,52 +1201,9 @@ fun DownloadHistoryItemCard(
             .fillMaxWidth()
             .glass(GlassMaterial.REGULAR, RoundedCornerShape(16.dp))
             .clickable {
-                if (isCompleted && item.localUri != null && File(item.localUri).exists()) {
-                    if (item.isVideo || formatText == "MP3") {
-                        val completedList = downloads.filter { 
-                            val isItemCompleted = it.progress == 1f || it.statusText.contains("بنجاح")
-                            val isAudio = it.localUri?.endsWith(".mp3", true) == true || it.localUri?.endsWith(".m4a", true) == true
-                            isItemCompleted && (it.isVideo || isAudio)
-                        }
-                        
-                        val queue = completedList.map { c ->
-                            val isAudio = c.localUri?.endsWith(".mp3", true) == true || c.localUri?.endsWith(".m4a", true) == true
-                            PlayableItem(
-                                id = c.id.toString(),
-                                title = c.title,
-                                artist = if (isAudio) "موسيقى Cove" else "فيديو Cove",
-                                url = c.localUri ?: "",
-                                thumbnailUrl = c.localUri ?: "",
-                                isLocal = true
-                            )
-                        }
-                        
-                        val index = completedList.indexOfFirst { it.id == item.id }
-                        playerViewModel.playQueueItem(
-                            PlayableItem(
-                                id = item.id.toString(),
-                                title = item.title,
-                                artist = if (formatText == "MP3") "موسيقى Cove" else "فيديو Cove",
-                                url = item.localUri ?: "",
-                                thumbnailUrl = item.localUri ?: "",
-                                isLocal = true
-                            ),
-                            queue,
-                            if (index != -1) index else 0
-                        )
-                        playerViewModel.setShowFullPlayer(true)
-                    } else {
-                        try {
-                            val intent = Intent(Intent.ACTION_VIEW).apply {
-                                setDataAndType(Uri.parse(item.localUri), "image/*")
-                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            }
-                            context.startActivity(intent)
-                        } catch (e: Exception) {
-                            Toast.makeText(context, "لا يوجد تطبيق لعرض الصور", Toast.LENGTH_SHORT).show()
-                        }
-                    }
+                val path = item.localUri
+                if (isCompleted && path != null && File(path).isFile && mediaKind != DownloadedMediaKind.UNKNOWN) {
+                    onOpenGallery(item)
                 }
             }
     ) {
@@ -1239,7 +1236,12 @@ fun DownloadHistoryItemCard(
                         )
                     } else {
                         Icon(
-                            imageVector = if (item.isVideo) Icons.Rounded.PlayCircleOutline else (if (formatText == "JPG") Icons.Rounded.Image else Icons.Rounded.MusicNote),
+                            imageVector = when (mediaKind) {
+                                DownloadedMediaKind.VIDEO -> Icons.Rounded.PlayCircleOutline
+                                DownloadedMediaKind.IMAGE -> Icons.Rounded.Image
+                                DownloadedMediaKind.AUDIO -> Icons.Rounded.MusicNote
+                                DownloadedMediaKind.UNKNOWN -> Icons.Rounded.Folder
+                            },
                             contentDescription = null,
                             tint = badgeColor,
                             modifier = Modifier.size(20.dp)
@@ -1257,7 +1259,12 @@ fun DownloadHistoryItemCard(
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            imageVector = if (item.isVideo) Icons.Rounded.PlayArrow else (if (formatText == "JPG") Icons.Rounded.Image else Icons.Rounded.MusicNote),
+                            imageVector = when (mediaKind) {
+                                DownloadedMediaKind.VIDEO -> Icons.Rounded.PlayArrow
+                                DownloadedMediaKind.IMAGE -> Icons.Rounded.Image
+                                DownloadedMediaKind.AUDIO -> Icons.Rounded.MusicNote
+                                DownloadedMediaKind.UNKNOWN -> Icons.Rounded.Folder
+                            },
                             contentDescription = null,
                             tint = Color.White,
                             modifier = Modifier.size(8.dp)
@@ -1336,7 +1343,7 @@ fun DownloadHistoryItemCard(
                                 onClick = {
                                     try {
                                         val intent = Intent(Intent.ACTION_SEND).apply {
-                                            type = if (item.isVideo) "video/*" else (if (formatText == "JPG") "image/*" else "audio/*")
+                                            type = mediaKind.mimeType
                                             putExtra(Intent.EXTRA_STREAM, Uri.parse(item.localUri))
                                             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                                         }
