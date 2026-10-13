@@ -3,6 +3,9 @@ name: Android Release
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '.github/workflows/**'
+      - 'scripts/bump_android_version.py'
   workflow_dispatch:
     inputs:
       bump:
@@ -111,12 +114,11 @@ jobs:
           echo "apk=$apk" >> "$GITHUB_OUTPUT"
           echo "aab=$aab" >> "$GITHUB_OUTPUT"
 
-      - name: Commit version and create tag
-        id: tag
+      - name: Commit version for release
+        id: version_commit
         shell: bash
         env:
           VERSION_NAME: ${{ steps.version.outputs.version_name }}
-          TAG: ${{ steps.version.outputs.tag }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
@@ -124,9 +126,7 @@ jobs:
           git add app/build.gradle.kts
           git diff --cached --quiet && { echo "Version file was not changed" >&2; exit 1; }
           git commit -m "chore(release): v${VERSION_NAME}"
-          git tag -a "$TAG" -m "Cove v${VERSION_NAME}"
           git push origin HEAD:main
-          git push origin "$TAG"
           echo "release_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Upload release artifact
@@ -144,9 +144,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
-          RELEASE_SHA: ${{ steps.tag.outputs.release_sha }}
+          RELEASE_SHA: ${{ steps.version_commit.outputs.release_sha }}
         run: |
           set -euo pipefail
+          # gh release create creates a missing tag at this verified release commit.
           gh release create "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$RELEASE_SHA" \
