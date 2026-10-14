@@ -493,7 +493,7 @@ private fun GalleryMediaPlaceholder(kind: DownloadedMediaKind) {
 }
 
 @Composable
-private fun ModernVideoPlaybackBar(
+internal fun ModernVideoPlaybackBar(
     isPlaying: Boolean,
     progress: Float,
     player: Player?,

@@ -12,6 +12,11 @@ class GetStreamUseCase(private val repository: SearchRepository) {
         repository.getStreams(videoId)
 }
 
+class GetPlaybackStreamUseCase(private val repository: SearchRepository) {
+    suspend operator fun invoke(videoId: String): StreamInfo? =
+        repository.getPlaybackStream(videoId)
+}
+
 class GetSuggestionsUseCase(private val repository: SearchRepository) {
     suspend operator fun invoke(query: String): List<String> =
         repository.getSuggestions(query)

@@ -25,6 +25,8 @@ class SearchRepository {
     private val searchCache = android.util.LruCache<String, List<SearchResult>>(50)
     private val streamInfoCache = android.util.LruCache<String, StreamInfo>(50)
     private val suggestionsCache = android.util.LruCache<String, List<String>>(100)
+    private data class CachedPlaybackStream(val info: StreamInfo, val expiresAtElapsedMs: Long)
+    private val playbackStreamCache = android.util.LruCache<String, CachedPlaybackStream>(32)
 
     suspend fun getSuggestions(query: String): List<String> = withContext(Dispatchers.IO) {
         val trimmed = query.trim()
@@ -106,6 +108,78 @@ class SearchRepository {
             searchCache.put(trimmed.lowercase(), distinctResults)
         }
         return@withContext distinctResults
+    }
+
+    /**
+     * Playback-only resolver: prefer the same NewPipe extractor used by search, then fall back
+     * to the complete existing resolver chain. DownloadViewModel continues to use getStreams()
+     * unchanged, so this fast path cannot alter download selection or reliability.
+     */
+    suspend fun getPlaybackStream(videoId: String): StreamInfo? = withContext(Dispatchers.IO) {
+        val source = videoId.trim()
+        if (source.isBlank()) return@withContext null
+
+        // YouTube IDs are case-sensitive; keep the exact source string as the playback cache key.
+        val cacheKey = source
+        val now = android.os.SystemClock.elapsedRealtime()
+        playbackStreamCache.get(cacheKey)?.let { cached ->
+            if (cached.expiresAtElapsedMs > now) return@withContext cached.info
+            playbackStreamCache.remove(cacheKey)
+        }
+
+        val startedAt = android.os.SystemClock.elapsedRealtime()
+        try {
+            resolveNewPipePlaybackStream(source)?.let { info ->
+                playbackStreamCache.put(
+                    cacheKey,
+                    CachedPlaybackStream(info, android.os.SystemClock.elapsedRealtime() + 60_000L)
+                )
+                Log.d(TAG, "Playback stream resolved by NewPipe in ${android.os.SystemClock.elapsedRealtime() - startedAt}ms")
+                return@withContext info
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Fast NewPipe playback resolution failed; using full fallback chain", e)
+        }
+
+        val fallbackStartedAt = android.os.SystemClock.elapsedRealtime()
+        val info = getStreams(source)
+        if (!info?.primaryPlayUrl.isNullOrBlank()) {
+            playbackStreamCache.put(
+                cacheKey,
+                CachedPlaybackStream(info!!, android.os.SystemClock.elapsedRealtime() + 60_000L)
+            )
+            Log.d(TAG, "Playback fallback resolved in ${android.os.SystemClock.elapsedRealtime() - fallbackStartedAt}ms")
+        }
+        info
+    }
+
+    private fun resolveNewPipePlaybackStream(videoId: String): StreamInfo? {
+        val url = if (videoId.startsWith("http", ignoreCase = true)) {
+            videoId
+        } else {
+            "https://www.youtube.com/watch?v=$videoId"
+        }
+        val extractor = ServiceList.YouTube.getStreamExtractor(url)
+        extractor.fetchPage()
+
+        val bestVideo = extractor.videoStreams?.firstOrNull {
+            it.getFormat()?.getName()?.contains("mp4", ignoreCase = true) == true
+        } ?: extractor.videoStreams?.firstOrNull()
+        val bestAudio = extractor.audioStreams?.firstOrNull {
+            it.getFormat()?.getName()?.contains("m4a", ignoreCase = true) == true
+        } ?: extractor.audioStreams?.firstOrNull()
+        val primaryUrl = bestVideo?.content ?: bestAudio?.content ?: return null
+
+        return StreamInfo(
+            videoId = videoId,
+            title = extractor.name,
+            primaryPlayUrl = primaryUrl,
+            videoUrl = bestVideo?.content,
+            audioUrl = bestAudio?.content,
+            uploader = extractor.uploaderName,
+            thumbnailUrl = extractor.thumbnails?.firstOrNull()?.url ?: "",
+            durationSeconds = extractor.length
+        )
     }
 
     private suspend fun fetchCobaltUrl(videoUrl: String, isAudioOnly: Boolean = false): String? = withContext(Dispatchers.IO) {

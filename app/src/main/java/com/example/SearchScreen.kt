@@ -53,52 +53,12 @@ fun SearchScreen(
     val query by searchViewModel.query.collectAsState()
     val context = LocalContext.current
 
-    // Handle stream resolution for PLAY ONLY (Ready state where forDownload is false) and errors
+    // Playback is started directly by PlayerViewModel so the player opens immediately and
+    // stream resolution happens once there. This effect now only reports genuine resolver errors.
     LaunchedEffect(resolveState) {
-        when (resolveState) {
-            is StreamResolveState.Ready -> {
-                val ready = resolveState as StreamResolveState.Ready
-                if (!ready.forDownload) {
-                    val searchState = searchViewModel.state.value
-                    val results = (searchState as? SearchUiState.Success)?.results ?: emptyList()
-                    val queue = results.map { r ->
-                        PlayableItem(
-                            id = r.videoId,
-                            title = r.title,
-                            artist = r.uploaderName,
-                            url = "", // Will resolve dynamically inside PlayerViewModel
-                            thumbnailUrl = r.thumbnailUrl,
-                            isLocal = false,
-                            durationSeconds = r.durationSeconds
-                        )
-                    }
-                    val index = results.indexOfFirst { it.videoId == ready.info.videoId }
-
-                    playerViewModel.playQueueItem(
-                        PlayableItem(
-                            id = ready.info.videoId,
-                            title = ready.info.title,
-                            artist = ready.info.uploader,
-                            url = ready.info.primaryPlayUrl,
-                            thumbnailUrl = ready.info.thumbnailUrl,
-                            isLocal = false,
-                            durationSeconds = ready.info.durationSeconds
-                        ),
-                        queue,
-                        if (index != -1) index else 0
-                    )
-                    searchViewModel.resetResolveState()
-                    playerViewModel.setShowFullPlayer(true)
-                    Toast.makeText(context, "جاري تشغيل: ${ready.info.title}", Toast.LENGTH_SHORT).show()
-                }
-            }
-            is StreamResolveState.Error -> {
-                val errorMsg = (resolveState as StreamResolveState.Error).message
-                Toast.makeText(context, "عذراً، فشل استخراج الرابط: $errorMsg", Toast.LENGTH_LONG).show()
-                searchViewModel.resetResolveState()
-            }
-            else -> {}
-        }
+        val error = resolveState as? StreamResolveState.Error ?: return@LaunchedEffect
+        Toast.makeText(context, "عذراً، فشل استخراج الرابط: ${error.message}", Toast.LENGTH_LONG).show()
+        searchViewModel.resetResolveState()
     }
 
     Box(
@@ -141,7 +101,21 @@ fun SearchScreen(
                                             searchViewModel.prepareDownload(result)
                                         },
                                         onPlayClick = {
-                                            searchViewModel.resolveStream(result.videoId, forDownload = false)
+                                            val queue = state.results.map { item ->
+                                                PlayableItem(
+                                                    id = item.videoId,
+                                                    title = item.title,
+                                                    artist = item.uploaderName,
+                                                    url = "",
+                                                    thumbnailUrl = item.thumbnailUrl,
+                                                    isLocal = false,
+                                                    durationSeconds = item.durationSeconds
+                                                )
+                                            }
+                                            val index = state.results.indexOfFirst { it.videoId == result.videoId }
+                                            if (index in queue.indices) {
+                                                playerViewModel.playQueueItem(queue[index], queue, index)
+                                            }
                                         }
                                     )
                                 }

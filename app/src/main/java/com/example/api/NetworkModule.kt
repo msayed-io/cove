@@ -2,6 +2,7 @@ package com.example.api
 
 import com.example.data.SearchRepository
 import com.example.domain.GetStreamUseCase
+import com.example.domain.GetPlaybackStreamUseCase
 import com.example.domain.SearchUseCase
 import com.example.domain.GetSuggestionsUseCase
 import kotlinx.serialization.json.Json
@@ -51,6 +52,7 @@ object NetworkModule {
     val downloadRepository by lazy { com.example.data.DownloadRepository() }
     val searchUseCase by lazy { SearchUseCase(searchRepository) }
     val getStreamUseCase by lazy { GetStreamUseCase(searchRepository) }
+    val getPlaybackStreamUseCase by lazy { GetPlaybackStreamUseCase(searchRepository) }
     val getSuggestionsUseCase by lazy { GetSuggestionsUseCase(searchRepository) }
 }
 

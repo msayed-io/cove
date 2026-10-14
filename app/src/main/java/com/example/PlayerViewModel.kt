@@ -1,20 +1,25 @@
 package com.example
 
+import android.app.Activity
 import android.content.ComponentName
 import android.content.Context
+import android.content.pm.ActivityInfo
+import android.net.Uri
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
-import android.net.Uri
-import android.util.Log
 import com.example.api.NetworkModule
 import com.example.domain.SearchResult
 import com.example.domain.StreamInfo
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -24,7 +29,7 @@ data class PlayableItem(
     val id: String, // videoId for online, or path for local
     val title: String,
     val artist: String,
-    val url: String, // stream URL or local file path
+    val url: String, // resolved stream URL or local file path
     val thumbnailUrl: String,
     val isLocal: Boolean,
     val durationSeconds: Long = 0L,
@@ -38,6 +43,15 @@ class PlayerViewModel : ViewModel() {
 
     private val _isPlaying = MutableStateFlow(false)
     val isPlaying = _isPlaying.asStateFlow()
+
+    private val _isResolvingStream = MutableStateFlow(false)
+    val isResolvingStream = _isResolvingStream.asStateFlow()
+
+    private val _isBuffering = MutableStateFlow(false)
+    val isBuffering = _isBuffering.asStateFlow()
+
+    private val _playbackError = MutableStateFlow<String?>(null)
+    val playbackError = _playbackError.asStateFlow()
 
     private val _currentMediaItem = MutableStateFlow<MediaItem?>(null)
     val currentMediaItem = _currentMediaItem.asStateFlow()
@@ -63,6 +77,12 @@ class PlayerViewModel : ViewModel() {
     private val _currentIndex = MutableStateFlow(-1)
     val currentIndex = _currentIndex.asStateFlow()
 
+    private val getPlaybackStreamUseCase = NetworkModule.getPlaybackStreamUseCase
+    private var streamResolveJob: Job? = null
+    private var streamResolveGeneration = 0L
+    private var pendingMediaItem: MediaItem? = null
+    private var orientationBeforePlayer: Int? = null
+
     init {
         // Continuous position polling flow running in VM scope
         viewModelScope.launch {
@@ -70,6 +90,7 @@ class PlayerViewModel : ViewModel() {
                 try {
                     _player.value?.let { p ->
                         _isPlaying.value = p.isPlaying
+                        _isBuffering.value = p.playbackState == Player.STATE_BUFFERING
                         _playbackPosition.value = p.currentPosition
                         val dur = p.duration
                         if (dur > 0) {
@@ -77,8 +98,8 @@ class PlayerViewModel : ViewModel() {
                             _playbackProgress.value = p.currentPosition.toFloat() / dur
                         }
                     }
-                } catch (e: Exception) {
-                    // Ignore background binder errors during active session transitions
+                } catch (_: Exception) {
+                    // Ignore background binder errors during active session transitions.
                 }
                 delay(400)
             }
@@ -87,14 +108,36 @@ class PlayerViewModel : ViewModel() {
 
     fun setShowFullPlayer(show: Boolean) {
         _showFullPlayer.value = show
+        if (!show && _isResolvingStream.value) {
+            streamResolveGeneration++
+            streamResolveJob?.cancel()
+            streamResolveJob = null
+            _isResolvingStream.value = false
+        }
+    }
+
+    fun toggleVideoOrientation(activity: Activity, currentlyLandscape: Boolean) {
+        if (orientationBeforePlayer == null) {
+            orientationBeforePlayer = activity.requestedOrientation
+        }
+        activity.requestedOrientation = if (currentlyLandscape) {
+            ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+        } else {
+            ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        }
+    }
+
+    fun restoreVideoOrientation(activity: Activity) {
+        orientationBeforePlayer?.let { activity.requestedOrientation = it }
+        orientationBeforePlayer = null
     }
 
     fun initController(context: Context) {
         if (controllerFuture != null) return
-        
+
         val isUnderTest = try {
             Class.forName("org.robolectric.Robolectric") != null
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             false
         }
         if (isUnderTest) return
@@ -104,13 +147,23 @@ class PlayerViewModel : ViewModel() {
             controllerFuture = MediaController.Builder(context, sessionToken).buildAsync()
             controllerFuture?.addListener({
                 try {
-                    val controller = controllerFuture?.get()
+                    val controller = controllerFuture?.get() ?: return@addListener
                     _player.value = controller
-                    _isPlaying.value = controller?.isPlaying ?: false
-                    _currentMediaItem.value = controller?.currentMediaItem
-                    controller?.addListener(object : Player.Listener {
+                    _isPlaying.value = controller.isPlaying
+                    _isBuffering.value = controller.playbackState == Player.STATE_BUFFERING
+                    _currentMediaItem.value = controller.currentMediaItem
+                    controller.addListener(object : Player.Listener {
                         override fun onIsPlayingChanged(isPlaying: Boolean) {
                             _isPlaying.value = isPlaying
+                        }
+
+                        override fun onPlaybackStateChanged(playbackState: Int) {
+                            _isBuffering.value = playbackState == Player.STATE_BUFFERING
+                        }
+
+                        override fun onPlayerError(error: PlaybackException) {
+                            _isBuffering.value = false
+                            _playbackError.value = error.localizedMessage ?: "تعذر تشغيل هذا المقطع."
                         }
 
                         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
@@ -118,9 +171,17 @@ class PlayerViewModel : ViewModel() {
                             _playbackPosition.value = controller.currentPosition
                             val dur = controller.duration
                             _playbackDuration.value = if (dur > 0) dur else 0L
-                            _playbackProgress.value = if (dur > 0) controller.currentPosition.toFloat() / dur else 0f
+                            _playbackProgress.value = if (dur > 0) {
+                                controller.currentPosition.toFloat() / dur
+                            } else {
+                                0f
+                            }
                         }
                     })
+                    pendingMediaItem?.let { pending ->
+                        pendingMediaItem = null
+                        startMediaItem(pending)
+                    }
                 } catch (e: Exception) {
                     Log.e("PlayerViewModel", "Failed to get controller", e)
                 }
@@ -130,22 +191,22 @@ class PlayerViewModel : ViewModel() {
         }
     }
 
-    private val getStreamUseCase = NetworkModule.getStreamUseCase
-
     fun playFromSearchResult(result: SearchResult) {
-        viewModelScope.launch {
-            try {
-                val info = getStreamUseCase(result.videoId)
-                if (info != null) {
-                    playStream(info)
-                }
-            } catch (e: Exception) {
-                Log.e("PlayerViewModel", "Failed to resolve stream for search result", e)
-            }
-        }
+        val item = PlayableItem(
+            id = result.videoId,
+            title = result.title,
+            artist = result.uploaderName,
+            url = "",
+            thumbnailUrl = result.thumbnailUrl,
+            isLocal = false,
+            durationSeconds = result.durationSeconds
+        )
+        playQueueItem(item, listOf(item), 0)
     }
 
     fun playStream(info: StreamInfo) {
+        _playbackError.value = null
+        _isResolvingStream.value = false
         play(
             url = info.primaryPlayUrl,
             title = info.title,
@@ -155,29 +216,84 @@ class PlayerViewModel : ViewModel() {
     }
 
     fun playLocalFile(uri: Uri, title: String) {
+        _playbackError.value = null
+        _isResolvingStream.value = false
         play(url = uri.toString(), title = title, artist = "تنزيلات Cove", thumbnail = "")
     }
 
     fun playQueueItem(item: PlayableItem, queue: List<PlayableItem>, index: Int) {
-        _playQueue.value = queue
+        streamResolveGeneration++
+        val requestGeneration = streamResolveGeneration
+        streamResolveJob?.cancel()
+        streamResolveJob = null
+
+        val updatedQueue = queue.toMutableList()
+        if (index in updatedQueue.indices) updatedQueue[index] = item
+        _playQueue.value = updatedQueue
         _currentIndex.value = index
-        _showFullPlayer.value = true // Automatically bring up full player screen on trigger
-        
-        if (item.isLocal) {
+        _showFullPlayer.value = true
+        _playbackError.value = null
+        _isBuffering.value = false
+
+        if (item.isLocal || item.url.isNotBlank()) {
+            _isResolvingStream.value = false
             play(url = item.url, title = item.title, artist = item.artist, thumbnail = item.thumbnailUrl)
-        } else {
-            // Asynchronously resolve online stream URL using YouTube stream scraper
-            viewModelScope.launch {
-                try {
-                    val info = getStreamUseCase(item.id)
-                    if (info != null) {
-                        play(url = info.primaryPlayUrl, title = info.title, artist = info.uploader, thumbnail = info.thumbnailUrl)
-                    }
-                } catch (e: Exception) {
-                    Log.e("PlayerViewModel", "Failed to resolve stream queue item", e)
+            return
+        }
+
+        // Open the player immediately and resolve one time in the background.
+        _isResolvingStream.value = true
+        streamResolveJob = viewModelScope.launch {
+            try {
+                val info = getPlaybackStreamUseCase(item.id)
+                if (requestGeneration != streamResolveGeneration) return@launch
+                if (info == null || info.primaryPlayUrl.isBlank()) {
+                    _playbackError.value = "تعذر الحصول على رابط التشغيل. حاول مرة أخرى."
+                    return@launch
+                }
+
+                val resolvedItem = item.copy(
+                    title = info.title.ifBlank { item.title },
+                    artist = info.uploader.ifBlank { item.artist },
+                    url = info.primaryPlayUrl,
+                    thumbnailUrl = info.thumbnailUrl.ifBlank { item.thumbnailUrl },
+                    durationSeconds = info.durationSeconds.takeIf { it > 0L } ?: item.durationSeconds
+                )
+                val currentQueue = _playQueue.value.toMutableList()
+                if (index in currentQueue.indices) {
+                    currentQueue[index] = resolvedItem
+                    _playQueue.value = currentQueue
+                }
+                _playbackError.value = null
+                play(
+                    url = resolvedItem.url,
+                    title = resolvedItem.title,
+                    artist = resolvedItem.artist,
+                    thumbnail = resolvedItem.thumbnailUrl
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (requestGeneration == streamResolveGeneration) {
+                    _playbackError.value = e.localizedMessage ?: "تعذر تجهيز البث. حاول مرة أخرى."
+                    Log.e("PlayerViewModel", "Failed to resolve playback stream", e)
+                }
+            } finally {
+                if (requestGeneration == streamResolveGeneration) {
+                    _isResolvingStream.value = false
+                    streamResolveJob = null
                 }
             }
         }
+    }
+
+    fun retryCurrentQueueItem() {
+        val index = _currentIndex.value
+        val queue = _playQueue.value
+        if (index !in queue.indices) return
+        val item = queue[index].copy(url = "")
+        val retryQueue = queue.toMutableList().apply { this[index] = item }
+        playQueueItem(item, retryQueue, index)
     }
 
     fun playNext() {
@@ -206,6 +322,10 @@ class PlayerViewModel : ViewModel() {
     }
 
     private fun play(url: String, title: String, artist: String, thumbnail: String) {
+        if (url.isBlank()) {
+            _playbackError.value = "رابط التشغيل غير صالح."
+            return
+        }
         val mediaItem = MediaItem.Builder()
             .setMediaId(url)
             .setUri(url)
@@ -218,14 +338,34 @@ class PlayerViewModel : ViewModel() {
             )
             .build()
 
-        _player.value?.let { player ->
-            player.setMediaItem(mediaItem)
-            player.prepare()
-            player.play()
+        _currentMediaItem.value = mediaItem
+        _playbackPosition.value = 0L
+        _playbackDuration.value = 0L
+        _playbackProgress.value = 0f
+        _playbackError.value = null
+        _isBuffering.value = true
+        startMediaItem(mediaItem)
+    }
+
+    private fun startMediaItem(mediaItem: MediaItem) {
+        val activePlayer = _player.value
+        if (activePlayer == null) {
+            pendingMediaItem = mediaItem
+            return
+        }
+        try {
+            activePlayer.setMediaItem(mediaItem)
+            activePlayer.prepare()
+            activePlayer.play()
+        } catch (e: Exception) {
+            _isBuffering.value = false
+            _playbackError.value = e.localizedMessage ?: "تعذر بدء تشغيل هذا المقطع."
+            Log.e("PlayerViewModel", "Failed to start media item", e)
         }
     }
 
     override fun onCleared() {
+        streamResolveJob?.cancel()
         controllerFuture?.let { MediaController.releaseFuture(it) }
         super.onCleared()
     }
