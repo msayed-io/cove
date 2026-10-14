@@ -635,7 +635,7 @@ private fun CoveModernVideoProgressBar(
 }
 
 @Composable
-private fun GalleryRoundButton(
+internal fun GalleryRoundButton(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     description: String,
     onClick: () -> Unit
