@@ -501,8 +501,7 @@ fun FullPlayerScreen(
                         onPlayPause = { if (isPlaying) player?.pause() else player?.play() },
                         onSeek = { fraction ->
                             if (durationMs > 0L) viewModel.seekTo((durationMs * fraction).toLong())
-                        },
-                        modifier = Modifier.fillMaxWidth()
+                        }
                     )
                 }
             }

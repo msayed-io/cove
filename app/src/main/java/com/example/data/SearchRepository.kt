@@ -4,6 +4,7 @@ import android.util.Log
 import com.example.api.NetworkModule
 import com.example.domain.SearchResult
 import com.example.domain.StreamInfo
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.jsonArray
@@ -137,6 +138,8 @@ class SearchRepository {
                 Log.d(TAG, "Playback stream resolved by NewPipe in ${android.os.SystemClock.elapsedRealtime() - startedAt}ms")
                 return@withContext info
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.w(TAG, "Fast NewPipe playback resolution failed; using full fallback chain", e)
         }
