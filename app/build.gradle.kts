@@ -18,8 +18,8 @@ android {
     applicationId = "com.cove.app"
     minSdk = 24
     targetSdk = 35
-        versionCode = (project.findProperty("versionCode") as? String)?.toIntOrNull() ?: 8
-        versionName = (project.findProperty("versionName") as? String) ?: "1.2.8"
+        versionCode = (project.findProperty("versionCode") as? String)?.toIntOrNull() ?: 9
+        versionName = (project.findProperty("versionName") as? String) ?: "1.2.9"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
