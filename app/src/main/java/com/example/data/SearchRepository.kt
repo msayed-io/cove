@@ -90,8 +90,8 @@ class SearchRepository {
                     }
                 }
                 pageCount++
-                // Fast response: 50 items or 2 pages max for ultra-responsive search
-                if (results.size >= 50 || pageCount >= 2 || !page.hasNextPage()) {
+                // Rich search results: up to 100 items or 5 pages for comprehensive search
+                if (results.size >= 100 || pageCount >= 5 || !page.hasNextPage()) {
                     break
                 }
                 page = searchExtractor.getPage(page.nextPage)

@@ -135,7 +135,7 @@ fun MiniPlayer(
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp)
                 .clip(CircleShape)
-                .background(Color(0xFF0D111A))
+                .background(Color(0xFF000000))
                 .border(1.dp, Color.White.copy(alpha = 0.12f), CircleShape)
                 .clickable { onClick() }
                 .padding(horizontal = 8.dp, vertical = 8.dp),
@@ -349,12 +349,19 @@ fun FullPlayerScreen(
                                 )
                             }
 
-                            // Big circular Play / Pause
+                            // Big circular Play / Pause with Frosted Glass Surface
                             Box(
                                 modifier = Modifier
                                     .size(64.dp)
-                                    .clip(CircleShape)
-                                    .background(Color.White.copy(alpha = 0.25f))
+                                    .glassSurface(
+                                        fillColor = Color.White,
+                                        tintAlpha = 0.28f,
+                                        capsule = true,
+                                        radius = 32.dp,
+                                        borderColor = Color.White.copy(alpha = 0.35f),
+                                        borderWidth = 1.dp,
+                                        rimWidth = GlassMath.EDGE_RIM_WIDTH_DP.dp
+                                    )
                                     .clickable {
                                         if (isPlaying) player?.pause() else player?.play()
                                     },
@@ -504,8 +511,13 @@ fun FullPlayerScreen(
                         },
                         modifier = Modifier
                             .size(46.dp)
-                            .clip(CircleShape)
-                            .background(CG.Card)
+                            .glassSurface(
+                                fillColor = CG.Card,
+                                tintAlpha = 0.55f,
+                                capsule = true,
+                                radius = 23.dp,
+                                borderColor = Color.White.copy(alpha = 0.12f)
+                            )
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.Headphones,
@@ -526,8 +538,13 @@ fun FullPlayerScreen(
                         },
                         modifier = Modifier
                             .size(46.dp)
-                            .clip(CircleShape)
-                            .background(CG.Card)
+                            .glassSurface(
+                                fillColor = CG.Card,
+                                tintAlpha = 0.55f,
+                                capsule = true,
+                                radius = 23.dp,
+                                borderColor = Color.White.copy(alpha = 0.12f)
+                            )
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.Share,

@@ -11,12 +11,14 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -30,7 +32,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -72,6 +77,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -85,6 +91,9 @@ import com.example.ui.theme.pressClickEffect
 import com.example.ui.theme.CoveArabic
 import com.example.ui.theme.CoveBrand
 import com.example.ui.theme.ArabicHeaviest
+import com.example.ui.theme.glassSurface
+import com.example.ui.theme.liquidGlass
+import com.example.ui.theme.GlassMath
 
 // ============================================================================
 // Cove — Cobalt Glass Home (S3)
@@ -127,98 +136,99 @@ fun CobaltHome(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        // الخلفية الجوية تُرسم مرة واحدة في جذر MainScreen (تجنبًا للـ overdraw).
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val availableHeight = maxHeight
+        val scrollState = rememberScrollState()
 
-        // المحتوى القابل للتمرير
+        // المحتوى القابل للتمرير موزع بتناسق رأسي كامل
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .statusBarsPadding()
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(scrollState)
                 .padding(horizontal = 20.dp)
                 .padding(top = 16.dp)
-                .padding(bottom = 112.dp),
+                .padding(bottom = 112.dp)
+                .defaultMinSize(minHeight = (availableHeight - 112.dp).coerceAtLeast(0.dp)),
+            verticalArrangement = Arrangement.SpaceBetween,
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // 1) الترويسة
+            // 1) الترويسة في أعلى الصفحة
             CobaltTopBar()
-            Spacer(Modifier.height(24.dp))
 
-            // 2) الهيرو
-            CobaltHero()
-            Spacer(Modifier.height(4.dp))
-
-            // 3) شريط البحث
-            CobaltSearchBar(
-                value = viewModel.inputUrl,
-                onValueChange = { viewModel.setUrl(it) },
-                onSearch = {
-                    val q = viewModel.inputUrl.trim()
-                    when {
-                        q.isBlank() -> { emptyToast = true; runCatching { focusRequester.requestFocus() } }
-                        android.util.Patterns.WEB_URL.matcher(q).matches() -> viewModel.fetchMedia()
-                        else -> onSearchQuery(q)
-                    }
-                },
-                onPaste = {
-                    val clip = clipboard.getText()?.text.orEmpty()
-                    if (clip.isNotBlank()) {
-                        viewModel.setUrl(clip)
-                        pasteToast = true
-                    }
-                    runCatching { focusRequester.requestFocus() }
-                },
-                pasteToast = pasteToast,
-                emptyToast = emptyToast,
-                focusRequester = focusRequester,
-            )
-            Spacer(Modifier.height(20.dp))
-
-            // D2/D3: بطاقة المعاينة / الخطأ — أسفل البحث وفوق البطاقة الكبرى
-            AnimatedVisibility(
-                visible = scrapingState is ScrapingState.Success || scrapingState is ScrapingState.Error || scrapingState is ScrapingState.Loading,
-                enter = fadeIn(tween(250)) + slideInVertically(tween(250)) { it / 2 },
-                exit = fadeOut(tween(200)) + slideOutVertically(tween(200)) { it / 2 },
+            // 2) منتصف الصفحة تمامًا: كتلة الهيرو (النص) وخانة البحث والنتائج
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Column {
-                    when (val s = scrapingState) {
-                        is ScrapingState.Loading -> CobaltLoadingCard()
-                        is ScrapingState.Success -> CobaltPreviewCard(
-                            media = s.media,
-                            defaultAudioOnly = quickMode == QuickMode.MP3,
-                            onStartDownloads = { requests ->
-                                requests.forEach { r -> viewModel.downloadUrl(r.title, r.url, r.isVideo, r.isAudioOnly, r.thumbnailUrl) }
-                                onShowStarted(true)
+                // 2) الهيرو (النصوص والعناوين)
+                CobaltHero()
+                Spacer(Modifier.height(18.dp))
+
+                // 3) شريط البحث بتصميم الكبسولة الزجاجية
+                CobaltSearchBar(
+                    value = viewModel.inputUrl,
+                    onValueChange = { viewModel.setUrl(it) },
+                    onSearch = {
+                        val q = viewModel.inputUrl.trim()
+                        when {
+                            q.isBlank() -> { emptyToast = true; runCatching { focusRequester.requestFocus() } }
+                            android.util.Patterns.WEB_URL.matcher(q).matches() -> viewModel.fetchMedia()
+                            else -> onSearchQuery(q)
+                        }
+                    },
+                    onPaste = {
+                        val clip = clipboard.getText()?.text.orEmpty()
+                        if (clip.isNotBlank()) {
+                            viewModel.setUrl(clip)
+                            pasteToast = true
+                            if (android.util.Patterns.WEB_URL.matcher(clip.trim()).matches()) {
+                                viewModel.fetchMedia()
                             }
-                        )
-                        is ScrapingState.Error -> CobaltErrorCard(s.message)
-                        else -> {}
+                        }
+                        runCatching { focusRequester.requestFocus() }
+                    },
+                    pasteToast = pasteToast,
+                    emptyToast = emptyToast,
+                    focusRequester = focusRequester,
+                )
+                Spacer(Modifier.height(16.dp))
+
+                // D1: بطاقة إذن المجلد — تظهر فقط عند غياب الإذن
+                if (!hasPermission) {
+                    CobaltPermissionCard(onRequestPermission)
+                    Spacer(Modifier.height(16.dp))
+                }
+
+                // D2/D3: بطاقة المعاينة / التحميل / الخطأ
+                AnimatedVisibility(
+                    visible = scrapingState is ScrapingState.Success || scrapingState is ScrapingState.Error || scrapingState is ScrapingState.Loading,
+                    enter = fadeIn(tween(250)) + slideInVertically(tween(250)) { it / 2 },
+                    exit = fadeOut(tween(200)) + slideOutVertically(tween(200)) { it / 2 },
+                ) {
+                    Column {
+                        when (val s = scrapingState) {
+                            is ScrapingState.Loading -> CobaltLoadingCard()
+                            is ScrapingState.Success -> CobaltPreviewCard(
+                                media = s.media,
+                                defaultAudioOnly = quickMode == QuickMode.MP3,
+                                onStartDownloads = { requests ->
+                                    requests.forEach { r -> viewModel.downloadUrl(r.title, r.url, r.isVideo, r.isAudioOnly, r.thumbnailUrl) }
+                                    onShowStarted(true)
+                                }
+                            )
+                            is ScrapingState.Error -> CobaltErrorCard(s.message)
+                            else -> {}
+                        }
+                        Spacer(Modifier.height(16.dp))
                     }
-                    Spacer(Modifier.height(20.dp))
                 }
             }
 
-            // D1: بطاقة إذن المجلد — بين البطاقة الكبرى وزر الإجراء، تظهر فقط عند غياب الإذن
-            if (!hasPermission) {
-                CobaltPermissionCard(onRequestPermission)
-                Spacer(Modifier.height(20.dp))
-            }
-
-            // 4) [أُزيلت البطاقة الكبرى الدائمة — المعاينة تظهر عند لصق رابط]
-
-            // 5) زر الإجراء + الشروط
-            CobaltCta(
-                onPrimary = {
-                    // D6: إن كان الحقل رابطًا شغّل مسار الفحص الحالي ثم تابع بالوضع المختار
-                    if (android.util.Patterns.WEB_URL.matcher(viewModel.inputUrl.trim()).matches()) {
-                        viewModel.fetchMedia()
-                    } else {
-                        emptyToast = true
-                        runCatching { focusRequester.requestFocus() }
-                    }
-                },
-                onTerms = { showTerms = true }
-            )
+            // 3) أسفل الصفحة: رابط الشروط فقط بعد حذف زر التنزيل السريع غير الضروري
+            CobaltFootnote(onTerms = { showTerms = true })
         }
 
         if (showTerms) CobaltTermsSheet(onDismiss = { showTerms = false })
@@ -312,9 +322,14 @@ private fun CobaltSearchBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(CircleShape)
-                .background(CG.SearchBar)
-                .border(1.dp, Color.White.copy(alpha = 0.10f), CircleShape)
+                .glassSurface(
+                    fillColor = CG.SearchBar,
+                    tintAlpha = 0.52f,
+                    capsule = true,
+                    borderColor = Color.White.copy(alpha = 0.14f),
+                    borderWidth = 0.8.dp,
+                    rimWidth = GlassMath.EDGE_RIM_WIDTH_DP.dp
+                )
                 .padding(6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -330,7 +345,7 @@ private fun CobaltSearchBar(
                 Icon(
                     imageVector = Icons.Default.ContentPaste,
                     contentDescription = "لصق",
-                    tint = Color.White,
+                    tint = Color.Black,
                     modifier = Modifier.size(16.dp)
                 )
             }
@@ -341,6 +356,8 @@ private fun CobaltSearchBar(
                 singleLine = true,
                 textStyle = TextStyle(color = CG.TextPrimary, fontSize = 12.sp, fontFamily = CoveArabic),
                 cursorBrush = SolidColor(CG.CobaltLight),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = { onSearch() }),
                 modifier = Modifier
                     .weight(1f)
                     .focusRequester(focusRequester)
@@ -431,47 +448,33 @@ private enum class FeatureBadge { LOCK, CHECK }
 
 
 // ----------------------------------------------------------------------------
-// زر الإجراء + الشروط
+// تذييل الصفحة — رابط الشروط الخفيف
 // ----------------------------------------------------------------------------
 @Composable
-private fun CobaltCta(onPrimary: () -> Unit, onTerms: () -> Unit) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(56.dp)
-                .clip(CircleShape)
-                .background(Brush.horizontalGradient(listOf(CG.Cobalt, CG.CobaltLight, CG.Cobalt)))
-                .pressClickEffect(onPrimary),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = stringResource(R.string.btn_start_quick_download),
-                color = Color.White,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.SemiBold,
-                fontFamily = CoveArabic
-            )
-        }
-        Spacer(Modifier.height(12.dp))
-        // نص الشروط مع رابط
-        Row(horizontalArrangement = Arrangement.Center, modifier = Modifier.widthIn(max = 320.dp)) {
-            Text(
-                text = stringResource(R.string.footnote_pre),
-                color = CG.TextMuted,
-                fontSize = 11.sp,
-                lineHeight = 17.9.sp,
-                fontFamily = CoveArabic
-            )
-            Text(
-                text = stringResource(R.string.footnote_terms_link),
-                color = CG.CobaltGlow,
-                fontSize = 11.sp,
-                fontFamily = CoveArabic,
-                modifier = Modifier.pressClickEffect(onTerms)
-            )
-            Text(text = ".", color = CG.TextMuted, fontSize = 11.sp, fontFamily = CoveArabic)
-        }
+private fun CobaltFootnote(onTerms: () -> Unit) {
+    Row(
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 12.dp)
+    ) {
+        Text(
+            text = stringResource(R.string.footnote_pre),
+            color = CG.TextMuted,
+            fontSize = 11.sp,
+            lineHeight = 17.9.sp,
+            fontFamily = CoveArabic
+        )
+        Spacer(Modifier.width(4.dp))
+        Text(
+            text = stringResource(R.string.footnote_terms_link),
+            color = CG.CobaltGlow,
+            fontSize = 11.sp,
+            fontFamily = CoveArabic,
+            modifier = Modifier.pressClickEffect(onTerms)
+        )
+        Text(text = ".", color = CG.TextMuted, fontSize = 11.sp, fontFamily = CoveArabic)
     }
 }
 
@@ -483,14 +486,24 @@ fun CobaltPermissionCard(onRequest: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
-            .background(CG.CardAlpha)
-            .border(1.dp, Color.White.copy(alpha = 0.09f), RoundedCornerShape(20.dp))
-            .padding(16.dp),
+            .liquidGlass(
+                fillColor = Color(0xFF000000),
+                washAlpha = 0.78f,
+                capsule = true,
+                radius = 28.dp,
+                borderColor = Color.White.copy(alpha = 0.16f),
+                borderWidth = 0.8.dp,
+                rimLightAlpha = 0.45f,
+                pressFeedback = false
+            )
+            .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
-            modifier = Modifier.size(42.dp).clip(CircleShape).background(CG.Cobalt.copy(alpha = 0.12f)),
+            modifier = Modifier
+                .size(42.dp)
+                .clip(CircleShape)
+                .background(CG.Cobalt.copy(alpha = 0.18f)),
             contentAlignment = Alignment.Center
         ) {
             Icon(
@@ -500,21 +513,34 @@ fun CobaltPermissionCard(onRequest: () -> Unit) {
                 modifier = Modifier.size(20.dp)
             )
         }
-        Spacer(Modifier.width(16.dp))
-        Column(Modifier.weight(1f)) {
-            Text(stringResource(R.string.permission_title), color = CG.TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold, fontFamily = CoveArabic)
-            Spacer(Modifier.height(2.dp))
-            Text(stringResource(R.string.permission_desc), color = CG.TextMuted, fontSize = 12.sp, fontFamily = CoveArabic)
-        }
-        Spacer(Modifier.width(12.dp))
+        Spacer(Modifier.width(14.dp))
+        Text(
+            text = stringResource(R.string.permission_title),
+            color = CG.TextPrimary,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Bold,
+            fontFamily = CoveArabic,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+        Spacer(Modifier.width(10.dp))
         Box(
             modifier = Modifier
+                .height(40.dp)
                 .clip(CircleShape)
-                .background(CG.Cobalt)
+                .background(Brush.horizontalGradient(listOf(CG.Cobalt, CG.CobaltGlow)))
                 .pressClickEffect(onRequest)
-                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .padding(horizontal = 16.dp),
+            contentAlignment = Alignment.Center
         ) {
-            Text(stringResource(R.string.permission_btn), color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold, fontFamily = CoveArabic)
+            Text(
+                text = stringResource(R.string.permission_btn),
+                color = Color.Black,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = CoveArabic
+            )
         }
     }
 }
@@ -612,7 +638,7 @@ private fun CobaltPreviewCard(
                 },
             contentAlignment = Alignment.Center
         ) {
-            Text(stringResource(R.string.btn_download), color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, fontFamily = CoveArabic)
+            Text(stringResource(R.string.btn_download), color = Color.Black, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, fontFamily = CoveArabic)
         }
     }
 }
@@ -645,7 +671,7 @@ private fun CobaltTermsSheet(onDismiss: () -> Unit) {
                     .pressClickEffect(onDismiss),
                 contentAlignment = Alignment.Center
             ) {
-                Text(stringResource(R.string.dialog_terms_close), color = Color.White, fontWeight = FontWeight.Bold, fontFamily = CoveArabic)
+                Text(stringResource(R.string.dialog_terms_close), color = Color.Black, fontWeight = FontWeight.Bold, fontFamily = CoveArabic)
             }
         }
     }
@@ -658,9 +684,14 @@ private fun CobaltTermsSheet(onDismiss: () -> Unit) {
 fun CoveDock(currentTab: ScreenTab, onTabSelected: (ScreenTab) -> Unit, modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
-            .clip(CircleShape)
-            .background(Color(0xFF0D111A))
-            .border(1.dp, Color.White.copy(alpha = 0.12f), CircleShape)
+            .glassSurface(
+                fillColor = Color(0xFF000000),
+                tintAlpha = 0.56f,
+                capsule = true,
+                borderColor = Color.White.copy(alpha = 0.15f),
+                borderWidth = 0.8.dp,
+                rimWidth = GlassMath.EDGE_RIM_WIDTH_DP.dp
+            )
             .padding(horizontal = 12.dp, vertical = 8.dp)
     ) {
         Row(

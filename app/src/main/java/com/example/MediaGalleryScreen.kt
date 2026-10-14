@@ -30,7 +30,12 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.VolumeOff
+import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.MusicNote
@@ -72,7 +77,13 @@ import androidx.media3.common.Player
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
 import com.example.ui.theme.CG
+import com.example.ui.theme.glassSurface
+import com.example.ui.theme.liquidGlass
+import com.example.ui.theme.GlassMath
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
@@ -212,98 +223,100 @@ internal fun LocalMediaGalleryScreen(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(190.dp)
+                .height(110.dp)
                 .align(Alignment.TopCenter)
-                .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.78f), Color.Transparent)))
+                .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.40f), Color.Transparent)))
         )
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(260.dp)
-                .align(Alignment.BottomCenter)
-                .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.82f))))
-        )
+        if (currentKind != DownloadedMediaKind.IMAGE) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(130.dp)
+                    .align(Alignment.BottomCenter)
+                    .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.45f))))
+            )
+        }
 
         AnimatedVisibility(
             visible = controlsVisible,
             modifier = Modifier.align(Alignment.TopCenter)
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .statusBarsPadding()
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                GalleryRoundButton(
-                    icon = Icons.Rounded.Close,
-                    description = "إغلاق المعرض",
-                    onClick = onClose
-                )
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = currentItem.title,
-                        color = Color.White,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = "${currentKind.label}  •  ${pagerState.currentPage + 1} / ${galleryItems.size}",
-                        color = Color.White.copy(alpha = 0.68f),
-                        fontSize = 11.sp,
-                        maxLines = 1
-                    )
-                }
-                if (currentKind == DownloadedMediaKind.IMAGE) {
-                    GalleryRoundButton(
-                        icon = if (zoomedItemId == currentItem.id) Icons.Rounded.ZoomOut else Icons.Rounded.ZoomIn,
-                        description = if (zoomedItemId == currentItem.id) "تصغير الصورة" else "تكبير الصورة",
-                        onClick = {
-                            zoomedItemId = if (zoomedItemId == currentItem.id) null else currentItem.id
+            // LTR wrapper guarantees Close button is physically on the LEFT and Title is on the RIGHT
+            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 18.dp, start = 16.dp, end = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    // 1. Physical Left side: Exit button & optional Zoom button (exact 42.dp height matching title)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        GalleryRoundButton(
+                            icon = Icons.Rounded.Close,
+                            description = "إغلاق المعرض",
+                            onClick = onClose
+                        )
+                        if (currentKind == DownloadedMediaKind.IMAGE) {
+                            GalleryRoundButton(
+                                icon = if (zoomedItemId == currentItem.id) Icons.Rounded.ZoomOut else Icons.Rounded.ZoomIn,
+                                description = if (zoomedItemId == currentItem.id) "تصغير الصورة" else "تكبير الصورة",
+                                onClick = {
+                                    zoomedItemId = if (zoomedItemId == currentItem.id) null else currentItem.id
+                                }
+                            )
                         }
-                    )
+                    }
+
+                    // 2. Physical Right side: Single-line Title Capsule with full circular pill ends and exact 42.dp height
+                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                        Box(
+                            modifier = Modifier
+                                .height(42.dp)
+                                .width(160.dp)
+                                .liquidGlass(
+                                    fillColor = Color(0xFF000000),
+                                    washAlpha = 0.68f,
+                                    capsule = true,
+                                    radius = 21.dp,
+                                    borderColor = Color.White.copy(alpha = 0.16f),
+                                    borderWidth = 0.8.dp,
+                                    rimLightAlpha = 0.45f,
+                                    pressFeedback = false
+                                )
+                                .padding(horizontal = 16.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = currentItem.title,
+                                color = Color.White,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
                 }
             }
         }
 
-        AnimatedVisibility(
-            visible = controlsVisible,
-            modifier = Modifier.align(Alignment.BottomCenter)
-        ) {
-            if (currentKind == DownloadedMediaKind.IMAGE) {
-                ImageGalleryFooter(
-                    item = currentItem,
-                    index = pagerState.currentPage,
-                    total = galleryItems.size,
-                    onPrevious = {
-                        if (pagerState.currentPage > 0) scope.launch { pagerState.animateScrollToPage(pagerState.currentPage - 1) }
-                    },
-                    onNext = {
-                        if (pagerState.currentPage < galleryItems.lastIndex) scope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) }
-                    }
-                )
-            } else {
-                PlaybackGalleryFooter(
-                    item = currentItem,
-                    kind = currentKind,
-                    index = pagerState.currentPage,
-                    total = galleryItems.size,
+        // 3. Bottom Playback Bar: Only in Video/Audio mode, completely hidden in Photo mode
+        if (currentKind != DownloadedMediaKind.IMAGE) {
+            AnimatedVisibility(
+                visible = controlsVisible,
+                modifier = Modifier.align(Alignment.BottomCenter)
+            ) {
+                ModernVideoPlaybackBar(
                     isPlaying = isPlaying,
-                    positionMs = positionMs,
-                    durationMs = durationMs,
                     progress = progress,
+                    player = player,
                     onPlayPause = { if (isPlaying) player?.pause() else player?.play() },
                     onSeek = { fraction ->
                         if (durationMs > 0L) playerViewModel.seekTo((durationMs * fraction).toLong())
-                    },
-                    onPrevious = {
-                        if (pagerState.currentPage > 0) scope.launch { pagerState.animateScrollToPage(pagerState.currentPage - 1) }
-                    },
-                    onNext = {
-                        if (pagerState.currentPage < galleryItems.lastIndex) scope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) }
                     }
                 )
             }
@@ -480,144 +493,143 @@ private fun GalleryMediaPlaceholder(kind: DownloadedMediaKind) {
 }
 
 @Composable
-private fun ImageGalleryFooter(
-    item: DownloadItem,
-    index: Int,
-    total: Int,
-    onPrevious: () -> Unit,
-    onNext: () -> Unit
-) {
-    GalleryFooterContainer {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            if (total > 1) {
-                IconButton(onClick = onPrevious, enabled = index > 0) {
-                    Icon(Icons.Rounded.SkipPrevious, contentDescription = "العنصر السابق", tint = Color.White)
-                }
-            }
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = item.title,
-                    color = Color.White,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = "${downloadedMediaFormat(item)}  •  ${galleryFileSize(item.localUri)}",
-                    color = Color.White.copy(alpha = 0.65f),
-                    style = MaterialTheme.typography.labelSmall
-                )
-            }
-            if (total > 1) {
-                Text("${index + 1} / $total", color = Color.White.copy(alpha = 0.72f), style = MaterialTheme.typography.labelMedium)
-                IconButton(onClick = onNext, enabled = index < total - 1) {
-                    Icon(Icons.Rounded.SkipNext, contentDescription = "العنصر التالي", tint = Color.White)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun PlaybackGalleryFooter(
-    item: DownloadItem,
-    kind: DownloadedMediaKind,
-    index: Int,
-    total: Int,
+private fun ModernVideoPlaybackBar(
     isPlaying: Boolean,
-    positionMs: Long,
-    durationMs: Long,
     progress: Float,
+    player: Player?,
     onPlayPause: () -> Unit,
-    onSeek: (Float) -> Unit,
-    onPrevious: () -> Unit,
-    onNext: () -> Unit
+    onSeek: (Float) -> Unit
 ) {
-    GalleryFooterContainer {
-        Column {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = item.title,
-                        color = Color.White,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = "${kind.label}  •  ${downloadedMediaFormat(item)}  •  ${galleryFileSize(item.localUri)}",
-                        color = Color.White.copy(alpha = 0.65f),
-                        style = MaterialTheme.typography.labelSmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                Text("${index + 1} / $total", color = Color.White.copy(alpha = 0.72f), style = MaterialTheme.typography.labelMedium)
-            }
+    var isMuted by remember { mutableStateOf(false) }
 
-            Spacer(Modifier.height(8.dp))
-            Slider(
-                value = progress.coerceIn(0f, 1f),
-                onValueChange = onSeek,
-                enabled = durationMs > 0L,
-                modifier = Modifier.fillMaxWidth().height(30.dp),
-                colors = SliderDefaults.colors(
-                    thumbColor = CG.CobaltGlow,
-                    activeTrackColor = CG.CobaltGlow,
-                    inactiveTrackColor = Color.White.copy(alpha = 0.2f)
-                )
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(formatTime(positionMs), color = Color.White.copy(alpha = 0.65f), style = MaterialTheme.typography.labelSmall)
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    IconButton(onClick = onPrevious, enabled = index > 0) {
-                        Icon(Icons.Rounded.SkipPrevious, contentDescription = "السابق", tint = if (index > 0) Color.White else Color.White.copy(alpha = 0.3f))
-                    }
-                    Surface(
-                        modifier = Modifier.size(54.dp).clickable(onClick = onPlayPause),
-                        shape = CircleShape,
-                        color = CG.CobaltGlow
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                                contentDescription = if (isPlaying) "إيقاف مؤقت" else "تشغيل",
-                                tint = Color.White,
-                                modifier = Modifier.size(30.dp)
-                            )
-                        }
-                    }
-                    IconButton(onClick = onNext, enabled = index < total - 1) {
-                        Icon(Icons.Rounded.SkipNext, contentDescription = "التالي", tint = if (index < total - 1) Color.White else Color.White.copy(alpha = 0.3f))
-                    }
-                }
-                Text(formatTime(durationMs), color = Color.White.copy(alpha = 0.65f), style = MaterialTheme.typography.labelSmall)
-            }
-        }
-    }
-}
-
-@Composable
-private fun GalleryFooterContainer(content: @Composable () -> Unit) {
-    Surface(
+    Box(
         modifier = Modifier
             .fillMaxWidth()
             .navigationBarsPadding()
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        shape = RoundedCornerShape(24.dp),
-        color = Color(0xD9101420),
-        tonalElevation = 0.dp
+            .padding(horizontal = 24.dp, vertical = 22.dp)
     ) {
+        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // 1. Speaker / Mute icon on the Left
+                IconButton(
+                    onClick = {
+                        val p = player ?: return@IconButton
+                        if (isMuted) {
+                            p.volume = 1f
+                            isMuted = false
+                        } else {
+                            p.volume = 0f
+                            isMuted = true
+                        }
+                    },
+                    modifier = Modifier.size(38.dp)
+                ) {
+                    Icon(
+                        imageVector = if (isMuted) Icons.AutoMirrored.Rounded.VolumeOff else Icons.AutoMirrored.Rounded.VolumeUp,
+                        contentDescription = if (isMuted) "إلغاء كتم الصوت" else "كتم الصوت",
+                        tint = Color.White,
+                        modifier = Modifier.size(26.dp)
+                    )
+                }
+
+                Spacer(Modifier.width(16.dp))
+
+                // 2. Custom Sleek Progress Track matching Screenshot_٢٠٢٦١٠١٤_١٤٢١٠٠.jpg
+                CoveModernVideoProgressBar(
+                    progress = progress,
+                    onSeek = onSeek,
+                    modifier = Modifier.weight(1f)
+                )
+
+                Spacer(Modifier.width(16.dp))
+
+                // 3. Play / Pause Button on the Right
+                IconButton(
+                    onClick = onPlayPause,
+                    modifier = Modifier.size(38.dp)
+                ) {
+                    Icon(
+                        imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                        contentDescription = if (isPlaying) "إيقاف مؤقت" else "تشغيل",
+                        tint = Color.White,
+                        modifier = Modifier.size(32.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CoveModernVideoProgressBar(
+    progress: Float,
+    onSeek: (Float) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var isDragging by remember { mutableStateOf(false) }
+    var dragProgress by remember { mutableStateOf(progress) }
+    val currentProgress = if (isDragging) dragProgress else progress.coerceIn(0f, 1f)
+
+    BoxWithConstraints(
+        modifier = modifier
+            .height(36.dp)
+            .pointerInput(Unit) {
+                detectTapGestures { offset ->
+                    if (size.width > 0) {
+                        val fraction = (offset.x / size.width.toFloat()).coerceIn(0f, 1f)
+                        onSeek(fraction)
+                    }
+                }
+            }
+            .pointerInput(Unit) {
+                detectDragGestures(
+                    onDragStart = { offset ->
+                        isDragging = true
+                        if (size.width > 0) {
+                            dragProgress = (offset.x / size.width.toFloat()).coerceIn(0f, 1f)
+                        }
+                    },
+                    onDragEnd = {
+                        isDragging = false
+                        onSeek(dragProgress)
+                    },
+                    onDragCancel = {
+                        isDragging = false
+                    },
+                    onDrag = { change, _ ->
+                        change.consume()
+                        if (size.width > 0) {
+                            val fraction = (change.position.x / size.width.toFloat()).coerceIn(0f, 1f)
+                            dragProgress = fraction
+                            onSeek(fraction)
+                        }
+                    }
+                )
+            },
+        contentAlignment = Alignment.CenterStart
+    ) {
+        val totalWidth = maxWidth
+        // 1. Dark translucent pill background track
         Box(
             modifier = Modifier
-                .border(1.dp, Color.White.copy(alpha = 0.10f), RoundedCornerShape(24.dp))
-                .padding(horizontal = 14.dp, vertical = 10.dp)
-        ) {
-            content()
+                .fillMaxWidth()
+                .height(11.dp)
+                .clip(CircleShape)
+                .background(Color.White.copy(alpha = 0.22f))
+        )
+
+        // 2. Solid white active pill track
+        if (currentProgress > 0f) {
+            Box(
+                modifier = Modifier
+                    .width(totalWidth * currentProgress)
+                    .height(11.dp)
+                    .clip(CircleShape)
+                    .background(Color.White)
+            )
         }
     }
 }
@@ -628,24 +640,22 @@ private fun GalleryRoundButton(
     description: String,
     onClick: () -> Unit
 ) {
-    Surface(
-        modifier = Modifier.size(42.dp).clickable(onClick = onClick),
-        shape = CircleShape,
-        color = Color.Black.copy(alpha = 0.40f),
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.12f))
+    Box(
+        modifier = Modifier
+            .size(42.dp)
+            .liquidGlass(
+                fillColor = Color(0xFF000000),
+                washAlpha = 0.68f,
+                capsule = true,
+                radius = 21.dp,
+                borderColor = Color.White.copy(alpha = 0.18f),
+                borderWidth = 0.8.dp,
+                rimLightAlpha = 0.50f,
+                pressFeedback = true
+            )
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
     ) {
-        Box(contentAlignment = Alignment.Center) {
-            Icon(icon, contentDescription = description, tint = Color.White, modifier = Modifier.size(20.dp))
-        }
-    }
-}
-
-private fun galleryFileSize(path: String?): String {
-    val bytes = path?.let { runCatching { File(it).length() }.getOrDefault(0L) } ?: 0L
-    if (bytes <= 0L) return "الحجم غير متاح"
-    return when {
-        bytes >= 1024L * 1024L * 1024L -> String.format("%.1f GB", bytes / (1024.0 * 1024.0 * 1024.0))
-        bytes >= 1024L * 1024L -> String.format("%.1f MB", bytes / (1024.0 * 1024.0))
-        else -> String.format("%.0f KB", bytes / 1024.0)
+        Icon(icon, contentDescription = description, tint = Color.White, modifier = Modifier.size(20.dp))
     }
 }

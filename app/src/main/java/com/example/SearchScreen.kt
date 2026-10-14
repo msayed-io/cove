@@ -50,7 +50,6 @@ fun SearchScreen(
 ) {
     val searchState by searchViewModel.state.collectAsState()
     val resolveState by searchViewModel.resolveState.collectAsState()
-    val selectedTab by searchViewModel.selectedTab.collectAsState()
     val query by searchViewModel.query.collectAsState()
     val context = LocalContext.current
 
@@ -108,42 +107,6 @@ fun SearchScreen(
             .background(Color.Transparent)
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            // Horizontal Navigation tabs under search bar matching Screenshot 2
-            val tabs = listOf("الكل", "Google", "Tiktok", "Facebook", "Instagram")
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .background(Color.Transparent)
-                    .padding(vertical = 10.dp, horizontal = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                tabs.forEach { tab ->
-                    val isSelected = selectedTab == tab
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(99.dp))
-                            .background(if (isSelected) Color.White.copy(alpha = 0.08f) else Color.Transparent)
-                            .border(
-                                width = 0.5.dp,
-                                color = if (isSelected) Color.White.copy(alpha = 0.15f) else Color.Transparent,
-                                shape = RoundedCornerShape(99.dp)
-                            )
-                            .clickable { searchViewModel.selectTab(tab) }
-                            .padding(horizontal = 16.dp, vertical = 6.dp)
-                    ) {
-                        Text(
-                            text = tab,
-                            style = MaterialTheme.typography.bodyMedium.copy(
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-                            ),
-                            color = if (isSelected) OmniGetDesignTokens.Accent else OmniGetDesignTokens.TextSecondary
-                        )
-                    }
-                }
-            }
-
             // Stream resolving top progress bar
             if (resolveState is StreamResolveState.Loading) {
                 LinearProgressIndicator(
@@ -153,174 +116,160 @@ fun SearchScreen(
                 )
             }
 
-            // Screen Content depending on active results filter tab
+            // Screen Content for search results
             Box(modifier = Modifier.weight(1f)) {
-                if (selectedTab == "الكل") {
-                    // Show standard YouTube / Piped results list
-                    when (val state = searchState) {
-                        is SearchUiState.Loading -> {
+                when (val state = searchState) {
+                    is SearchUiState.Loading -> {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(color = OmniGetDesignTokens.Accent)
+                        }
+                    }
+                    is SearchUiState.Success -> {
+                        if (state.results.isEmpty()) {
                             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                CircularProgressIndicator(color = OmniGetDesignTokens.Accent)
+                                Text(text = "لا توجد نتائج", color = OmniGetDesignTokens.TextSecondary)
                             }
-                        }
-                        is SearchUiState.Success -> {
-                            if (state.results.isEmpty()) {
-                                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                    Text(text = "لا توجد نتائج", color = OmniGetDesignTokens.TextSecondary)
-                                }
-                            } else {
-                                LazyColumn(
-                                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                                    contentPadding = PaddingValues(top = 12.dp, bottom = 140.dp, start = 16.dp, end = 16.dp)
-                                ) {
-                                    items(state.results) { result ->
-                                        SearchResultItem(
-                                            result = result,
-                                            onDownloadClick = {
-                                                searchViewModel.prepareDownload(result)
-                                            },
-                                            onPlayClick = {
-                                                searchViewModel.resolveStream(result.videoId, forDownload = false)
-                                            }
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                        is SearchUiState.Blocked -> {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .verticalScroll(rememberScrollState())
-                                    .padding(24.dp),
-                                contentAlignment = Alignment.Center
+                        } else {
+                            LazyColumn(
+                                verticalArrangement = Arrangement.spacedBy(12.dp),
+                                contentPadding = PaddingValues(top = 12.dp, bottom = 140.dp, start = 16.dp, end = 16.dp)
                             ) {
+                                items(state.results) { result ->
+                                    SearchResultItem(
+                                        result = result,
+                                        onDownloadClick = {
+                                            searchViewModel.prepareDownload(result)
+                                        },
+                                        onPlayClick = {
+                                            searchViewModel.resolveStream(result.videoId, forDownload = false)
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    is SearchUiState.Blocked -> {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .verticalScroll(rememberScrollState())
+                                .padding(24.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .glass(GlassMaterial.STRONG, RoundedCornerShape(24.dp))
+                                    .border(1.dp, OmniGetDesignTokens.Accent.copy(alpha = 0.3f), RoundedCornerShape(24.dp))
+                                    .padding(24.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(16.dp)
+                            ) {
+                                // Guidance/Light Icon with glow
+                                Box(
+                                    modifier = Modifier
+                                        .size(64.dp)
+                                        .clip(CircleShape)
+                                        .background(OmniGetDesignTokens.Accent.copy(alpha = 0.15f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Favorite,
+                                        contentDescription = null,
+                                        tint = OmniGetDesignTokens.Accent,
+                                        modifier = Modifier.size(32.dp)
+                                    )
+                                }
+
+                                // Blocked Message
+                                Text(
+                                    text = state.message,
+                                    style = MaterialTheme.typography.titleMedium.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        lineHeight = 24.sp
+                                    ),
+                                    color = OmniGetDesignTokens.TextPrimary,
+                                    textAlign = TextAlign.Center
+                                )
+
+                                // Decorative Divider
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth(0.4f)
+                                        .height(2.dp)
+                                        .background(
+                                            Brush.horizontalGradient(
+                                                listOf(Color.Transparent, OmniGetDesignTokens.Accent.copy(alpha = 0.5f), Color.Transparent)
+                                            )
+                                        )
+                                )
+
+                                // Prophetic Hadith Box
                                 Column(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .glass(GlassMaterial.STRONG, RoundedCornerShape(24.dp))
-                                        .border(1.dp, OmniGetDesignTokens.Accent.copy(alpha = 0.3f), RoundedCornerShape(24.dp))
-                                        .padding(24.dp),
+                                        .glass(GlassMaterial.REGULAR, RoundedCornerShape(16.dp))
+                                        .border(0.5.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(16.dp))
+                                        .padding(16.dp),
                                     horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    // Guidance/Light Icon with glow
-                                    Box(
-                                        modifier = Modifier
-                                            .size(64.dp)
-                                            .clip(CircleShape)
-                                            .background(OmniGetDesignTokens.Accent.copy(alpha = 0.15f)),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Rounded.Favorite,
-                                            contentDescription = null,
-                                            tint = OmniGetDesignTokens.Accent,
-                                            modifier = Modifier.size(32.dp)
-                                        )
-                                    }
-
-                                    // Blocked Message
                                     Text(
-                                        text = state.message,
-                                        style = MaterialTheme.typography.titleMedium.copy(
-                                            fontWeight = FontWeight.Bold,
-                                            lineHeight = 24.sp
+                                        text = "تذكير بحديث المصطفى ﷺ:",
+                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                        color = OmniGetDesignTokens.Accent
+                                    )
+                                    
+                                    Text(
+                                        text = state.hadith,
+                                        style = MaterialTheme.typography.bodyMedium.copy(
+                                            fontStyle = FontStyle.Normal,
+                                            lineHeight = 22.sp,
+                                            fontWeight = FontWeight.Medium
                                         ),
-                                        color = OmniGetDesignTokens.TextPrimary,
+                                        color = OmniGetDesignTokens.TextPrimary.copy(alpha = 0.9f),
                                         textAlign = TextAlign.Center
                                     )
+                                }
 
-                                    // Decorative Divider
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth(0.4f)
-                                            .height(2.dp)
-                                            .background(
-                                                Brush.horizontalGradient(
-                                                    listOf(Color.Transparent, OmniGetDesignTokens.Accent.copy(alpha = 0.5f), Color.Transparent)
-                                                )
-                                            )
+                                // Supplication / Prayer Box
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 8.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Lightbulb,
+                                        contentDescription = null,
+                                        tint = OmniGetDesignTokens.Accent.copy(alpha = 0.7f),
+                                        modifier = Modifier.size(24.dp)
                                     )
-
-                                    // Prophetic Hadith Box
-                                    Column(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .glass(GlassMaterial.REGULAR, RoundedCornerShape(16.dp))
-                                            .border(0.5.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(16.dp))
-                                            .padding(16.dp),
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        Text(
-                                            text = "تذكير بحديث المصطفى ﷺ:",
-                                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                                            color = OmniGetDesignTokens.Accent
-                                        )
-                                        
-                                        Text(
-                                            text = state.hadith,
-                                            style = MaterialTheme.typography.bodyMedium.copy(
-                                                fontStyle = FontStyle.Normal,
-                                                lineHeight = 22.sp,
-                                                fontWeight = FontWeight.Medium
-                                            ),
-                                            color = OmniGetDesignTokens.TextPrimary.copy(alpha = 0.9f),
-                                            textAlign = TextAlign.Center
-                                        )
-                                    }
-
-                                    // Supplication / Prayer Box
-                                    Column(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 8.dp),
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Rounded.Lightbulb,
-                                            contentDescription = null,
-                                            tint = OmniGetDesignTokens.Accent.copy(alpha = 0.7f),
-                                            modifier = Modifier.size(24.dp)
-                                        )
-                                        
-                                        Text(
-                                            text = state.prayer,
-                                            style = MaterialTheme.typography.bodySmall.copy(
-                                                lineHeight = 18.sp,
-                                                fontWeight = FontWeight.Medium
-                                            ),
-                                            color = OmniGetDesignTokens.TextSecondary,
-                                            textAlign = TextAlign.Center
-                                        )
-                                    }
+                                    
+                                    Text(
+                                        text = state.prayer,
+                                        style = MaterialTheme.typography.bodySmall.copy(
+                                            lineHeight = 18.sp,
+                                            fontWeight = FontWeight.Medium
+                                        ),
+                                        color = OmniGetDesignTokens.TextSecondary,
+                                        textAlign = TextAlign.Center
+                                    )
                                 }
                             }
                         }
-                        is SearchUiState.Error -> {
-                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                Text(text = state.message, color = OmniGetDesignTokens.DangerText, textAlign = TextAlign.Center)
-                            }
-                        }
-                        is SearchUiState.Idle -> {
-                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                Text(text = "ابدأ البحث من الأعلى", color = OmniGetDesignTokens.TextSecondary)
-                            }
+                    }
+                    is SearchUiState.Error -> {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text(text = state.message, color = OmniGetDesignTokens.DangerText, textAlign = TextAlign.Center)
                         }
                     }
-                } else {
-                    // WebView Platform Search
-                    val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
-                    val targetUrl = when (selectedTab) {
-                        "Google" -> "https://www.google.com/search?q=$encodedQuery"
-                        "Tiktok" -> "https://www.tiktok.com/search?q=$encodedQuery"
-                        "Facebook" -> "https://www.facebook.com/search/top/?q=$encodedQuery"
-                        "Instagram" -> "https://www.instagram.com/explore/tags/$encodedQuery"
-                        else -> "https://www.google.com"
+                    is SearchUiState.Idle -> {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text(text = "ابدأ البحث من الأعلى", color = OmniGetDesignTokens.TextSecondary)
+                        }
                     }
-                    SearchWebView(url = targetUrl, viewModel = viewModel)
                 }
             }
         }

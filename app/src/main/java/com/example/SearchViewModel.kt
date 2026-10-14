@@ -102,9 +102,6 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     private val _searchSuggestionsActive = MutableStateFlow(false)
     val searchSuggestionsActive: StateFlow<Boolean> = _searchSuggestionsActive.asStateFlow()
 
-    private val _selectedTab = MutableStateFlow("الكل")
-    val selectedTab: StateFlow<String> = _selectedTab.asStateFlow()
-
     private var searchJob: Job? = null
     private var suggestionsJob: Job? = null
 
@@ -147,12 +144,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
             _state.value = SearchUiState.Idle
             _suggestions.value = emptyList()
             _searchSuggestionsActive.value = false
-            _selectedTab.value = "الكل"
         }
-    }
-
-    fun selectTab(tab: String) {
-        _selectedTab.value = tab
     }
 
     fun performSearch(searchQuery: String) {
@@ -160,7 +152,6 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         _isSearching.value = true
         _searchSuggestionsActive.value = false
         _suggestions.value = emptyList()
-        _selectedTab.value = "الكل" // Reset to "الكل" (All/YouTube)
         
         if (ContentFilter.containsBlockedContent(searchQuery)) {
             _state.value = SearchUiState.Blocked(

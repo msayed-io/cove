@@ -57,10 +57,10 @@ fun Modifier.glass(
     shape: Shape = RoundedCornerShape(CG.RadiusMd)
 ): Modifier {
     val glassBrush = when (material) {
-        GlassMaterial.SUBTLE -> Brush.verticalGradient(listOf(Color(0x40121622), Color(0x1F0B0F19)))
-        GlassMaterial.REGULAR -> Brush.verticalGradient(listOf(Color(0xBF121622), Color(0x660B0F19)))
-        GlassMaterial.STRONG -> Brush.verticalGradient(listOf(Color(0xE60D111A), Color(0xB30B0F19)))
-        GlassMaterial.ACCENT_TINTED -> Brush.verticalGradient(listOf(Color(0x3D3B82F6), Color(0x141A2233)))
+        GlassMaterial.SUBTLE -> Brush.verticalGradient(listOf(Color(0x80000000), Color(0x59000000)))
+        GlassMaterial.REGULAR -> Brush.verticalGradient(listOf(Color(0xD9000000), Color(0x99000000)))
+        GlassMaterial.STRONG -> Brush.verticalGradient(listOf(Color(0xF2000000), Color(0xCC000000)))
+        GlassMaterial.ACCENT_TINTED -> Brush.verticalGradient(listOf(Color(0x3D3B82F6), Color(0x1F000000)))
     }
     val borderBrush = when (material) {
         GlassMaterial.ACCENT_TINTED -> Brush.verticalGradient(listOf(Color(0x6660A5FA), Color(0x1F3B82F6)))
