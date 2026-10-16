@@ -498,15 +498,21 @@ internal fun ModernVideoPlaybackBar(
     progress: Float,
     player: Player?,
     onPlayPause: () -> Unit,
-    onSeek: (Float) -> Unit
+    onSeek: (Float) -> Unit,
+    /**
+     * The gallery viewer owns the full screen and therefore keeps the navigation-bar inset.
+     * The search player embeds this very bar inside its fixed video stage, where that inset
+     * would push the bar off-centre, so it opts out.
+     */
+    withNavigationBarPadding: Boolean = true
 ) {
     var isMuted by remember { mutableStateOf(false) }
 
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .navigationBarsPadding()
-            .padding(horizontal = 24.dp, vertical = 22.dp)
+            .then(if (withNavigationBarPadding) Modifier.navigationBarsPadding() else Modifier)
+            .padding(horizontal = 24.dp, vertical = if (withNavigationBarPadding) 22.dp else 10.dp)
     ) {
         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
             Row(

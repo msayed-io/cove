@@ -109,7 +109,8 @@ fun SearchScreen(
                                                     url = "",
                                                     thumbnailUrl = item.thumbnailUrl,
                                                     isLocal = false,
-                                                    durationSeconds = item.durationSeconds
+                                                    durationSeconds = item.durationSeconds,
+                                                    viewCountText = formatViewCount(item.viewCount)
                                                 )
                                             }
                                             val index = state.results.indexOfFirst { it.videoId == result.videoId }
@@ -248,47 +249,26 @@ fun SearchScreen(
             }
         }
 
-        // Premium Custom Bottom Sheet (البطاقة السفلية) slide-up layout matching Screenshot 2 instructions
-        val isReadyForDownload = resolveState is StreamResolveState.Ready && (resolveState as StreamResolveState.Ready).forDownload
-        
-        AnimatedVisibility(
-            visible = isReadyForDownload,
-            enter = fadeIn(),
-            exit = fadeOut()
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.65f))
-                    .clickable { searchViewModel.resetResolveState() }
+        // Real modal bottom sheet — the same sheet language used across the app.
+        val readyResolveState = resolveState as? StreamResolveState.Ready
+        if (readyResolveState != null && readyResolveState.forDownload) {
+            val streamInfo = readyResolveState.info
+            CoveDownloadOptionsSheet(
+                info = streamInfo,
+                onDismiss = { searchViewModel.resetResolveState() },
+                onDownloadSelected = { isAudio ->
+                    val urlToDownload = if (streamInfo.videoId.startsWith("http")) streamInfo.videoId else "https://www.youtube.com/watch?v=${streamInfo.videoId}"
+                    viewModel.downloadUrl(
+                        title = streamInfo.title,
+                        url = urlToDownload,
+                        isVideo = !isAudio,
+                        isAudioOnly = isAudio,
+                        thumbnailUrl = streamInfo.thumbnailUrl
+                    )
+                    searchViewModel.resetResolveState()
+                    Toast.makeText(context, "بدأ تحميل: ${streamInfo.title}", Toast.LENGTH_LONG).show()
+                }
             )
-        }
-
-        AnimatedVisibility(
-            visible = isReadyForDownload,
-            enter = slideInVertically(initialOffsetY = { it }),
-            exit = slideOutVertically(targetOffsetY = { it }),
-            modifier = Modifier.align(Alignment.BottomCenter)
-        ) {
-            if (resolveState is StreamResolveState.Ready) {
-                val streamInfo = (resolveState as StreamResolveState.Ready).info
-                DownloadOptionsSheetContent(
-                    info = streamInfo,
-                    onDismiss = { searchViewModel.resetResolveState() },
-                    onDownloadSelected = { isAudio ->
-                        val urlToDownload = if (streamInfo.videoId.startsWith("http")) streamInfo.videoId else "https://www.youtube.com/watch?v=${streamInfo.videoId}"
-                        viewModel.downloadUrl(
-                            title = streamInfo.title,
-                            url = urlToDownload,
-                            isVideo = !isAudio,
-                            isAudioOnly = isAudio,
-                            thumbnailUrl = streamInfo.thumbnailUrl
-                        )
-                        searchViewModel.resetResolveState()
-                        Toast.makeText(context, "بدأ تحميل: ${streamInfo.title}", Toast.LENGTH_LONG).show()
-                    }
-                )
-            }
         }
     }
 }
@@ -378,13 +358,7 @@ fun SearchResultItem(
                 
                 Spacer(modifier = Modifier.height(4.dp))
                 
-                val viewsFormatted = if (result.viewCount > 1000000) {
-                    "${result.viewCount / 1000000}M"
-                } else if (result.viewCount > 1000) {
-                    "${result.viewCount / 1000}K"
-                } else {
-                    "${result.viewCount}"
-                }
+                val viewsFormatted = formatViewCount(result.viewCount)
                 Text(
                     text = "مشاهدة $viewsFormatted",
                     style = MaterialTheme.typography.labelSmall,
@@ -453,167 +427,178 @@ fun DownloadOptionsSheetContent(
 ) {
     var selectedFormat by remember { mutableStateOf("mp4") }
 
-    Surface(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .wrapContentHeight(),
-        color = OmniGetDesignTokens.Surface1,
-        shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp),
-        border = BorderStroke(0.5.dp, Color.White.copy(alpha = 0.12f))
+            .navigationBarsPadding()
+            .padding(horizontal = 20.dp, vertical = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .navigationBarsPadding()
-                .padding(horizontal = 20.dp, vertical = 20.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+        // Sheet Header Title
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.End
         ) {
-            // Drag Handle / Indicator
+            Text(
+                text = "تنزيل الوسائط",
+                style = MaterialTheme.typography.titleLarge.copy(fontSize = 22.sp),
+                fontWeight = FontWeight.Bold,
+                color = Color.White,
+                textAlign = TextAlign.End
+            )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Media Info Row
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Box(
                 modifier = Modifier
-                    .width(36.dp)
-                    .height(5.dp)
-                    .background(OmniGetDesignTokens.TextSecondary.copy(alpha = 0.5f), RoundedCornerShape(99.dp))
-                    .align(Alignment.CenterHorizontally)
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Sheet Header Title
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.End
+                    .size(80.dp, 48.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color.White.copy(alpha = 0.05f))
             ) {
-                Text(
-                    text = "تنزيل الوسائط",
-                    style = MaterialTheme.typography.titleLarge.copy(fontSize = 22.sp),
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White,
-                    textAlign = TextAlign.End
+                AsyncImage(
+                    model = info.thumbnailUrl,
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
                 )
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.width(12.dp))
 
-            // Media Info Row
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(80.dp, 48.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(Color.White.copy(alpha = 0.05f))
-                ) {
-                    AsyncImage(
-                        model = info.thumbnailUrl,
-                        contentDescription = null,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop
-                    )
-                }
-
-                Spacer(modifier = Modifier.width(12.dp))
-
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = info.title,
-                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                        color = Color.White,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = info.uploader,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = OmniGetDesignTokens.TextSecondary
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(20.dp))
-            HorizontalDivider(color = Color(0x14FFFFFF))
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Audio Section Title (Changed from Music to Sound Clip)
-            Text(
-                text = "مقطع صوتي",
-                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
-                color = OmniGetDesignTokens.TextSecondary,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 8.dp),
-                textAlign = TextAlign.Right
-            )
-
-            SearchFormatRow(
-                title = "MP3 كلاسيكي",
-                isSelected = selectedFormat == "mp3",
-                icon = Icons.Rounded.MusicNote,
-                onClick = { selectedFormat = "mp3" }
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Video Section Title
-            Text(
-                text = "فيديو",
-                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
-                color = OmniGetDesignTokens.TextSecondary,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 8.dp),
-                textAlign = TextAlign.Right
-            )
-
-            SearchFormatRow(
-                title = "MP4 بجودة عالية",
-                isSelected = selectedFormat == "mp4",
-                icon = Icons.Rounded.PlayCircle,
-                onClick = { selectedFormat = "mp4" }
-            )
-
-            Spacer(modifier = Modifier.height(28.dp))
-
-            // Solid Gradient Download Button with brand accent and fully circular edges (No Cancel Button)
-            Button(
-                onClick = {
-                    val isAudioOnly = selectedFormat == "mp3"
-                    onDownloadSelected(isAudioOnly)
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp),
-                shape = CircleShape,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color.Transparent,
-                    contentColor = Color.Black
-                ),
-                contentPadding = PaddingValues()
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            brush = Brush.verticalGradient(
-                                colors = listOf(OmniGetDesignTokens.Accent, OmniGetDesignTokens.AccentPressed)
-                            ),
-                            shape = CircleShape
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "تنزيل",
-                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold, fontSize = 16.sp),
-                        color = Color.Black
-                    )
-                }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = info.title,
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                    color = Color.White,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = info.uploader,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = OmniGetDesignTokens.TextSecondary
+                )
             }
         }
+
+        Spacer(modifier = Modifier.height(20.dp))
+        HorizontalDivider(color = Color(0x14FFFFFF))
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Audio Section Title
+        Text(
+            text = "مقطع صوتي",
+            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+            color = OmniGetDesignTokens.TextSecondary,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp),
+            textAlign = TextAlign.Right
+        )
+
+        SearchFormatRow(
+            title = "MP3 كلاسيكي",
+            isSelected = selectedFormat == "mp3",
+            icon = Icons.Rounded.MusicNote,
+            onClick = { selectedFormat = "mp3" }
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Video Section Title
+        Text(
+            text = "فيديو",
+            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+            color = OmniGetDesignTokens.TextSecondary,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp),
+            textAlign = TextAlign.Right
+        )
+
+        SearchFormatRow(
+            title = "MP4 بجودة عالية",
+            isSelected = selectedFormat == "mp4",
+            icon = Icons.Rounded.PlayCircle,
+            onClick = { selectedFormat = "mp4" }
+        )
+
+        Spacer(modifier = Modifier.height(28.dp))
+
+        // Solid, high-contrast download button — the label is always readable.
+        Button(
+            onClick = {
+                val isAudioOnly = selectedFormat == "mp3"
+                onDownloadSelected(isAudioOnly)
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp),
+            shape = CircleShape,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = CG.Platinum,
+                contentColor = CG.Void
+            ),
+            contentPadding = PaddingValues()
+        ) {
+            Text(
+                text = "تنزيل",
+                style = MaterialTheme.typography.labelMedium.copy(
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp
+                ),
+                color = CG.Void
+            )
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
     }
+}
+
+/**
+ * The app's standard download options bottom sheet.
+ *
+ * Every entry point (search results, the player, …) shows this exact component, so the sheet
+ * always slides in with a scrim and a drag handle instead of the old hand-rolled overlay.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CoveDownloadOptionsSheet(
+    info: StreamInfo,
+    onDismiss: () -> Unit,
+    onDownloadSelected: (isAudio: Boolean) -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = OmniGetDesignTokens.Surface1,
+        shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp),
+        dragHandle = {
+            BottomSheetDefaults.DragHandle(color = OmniGetDesignTokens.TextMuted.copy(alpha = 0.5f))
+        }
+    ) {
+        DownloadOptionsSheetContent(
+            info = info,
+            onDismiss = onDismiss,
+            onDownloadSelected = onDownloadSelected
+        )
+    }
+}
+
+/** "1M" / "12K" / "840" — shared by the result cards and the player meta line. */
+private fun formatViewCount(count: Long): String = when {
+    count > 1_000_000 -> "${count / 1_000_000}M"
+    count > 1_000 -> "${count / 1_000}K"
+    else -> "$count"
 }
 
 @Composable

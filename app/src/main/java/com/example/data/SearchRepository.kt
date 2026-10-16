@@ -6,7 +6,12 @@ import com.example.domain.SearchResult
 import com.example.domain.StreamInfo
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.jsonObject
@@ -112,9 +117,17 @@ class SearchRepository {
     }
 
     /**
-     * Playback-only resolver: prefer the same NewPipe extractor used by search, then fall back
-     * to the complete existing resolver chain. DownloadViewModel continues to use getStreams()
-     * unchanged, so this fast path cannot alter download selection or reliability.
+     * Playback-only resolver.
+     *
+     * Order of work (fastest first, so tapping a result starts playing immediately):
+     *  1. NewPipe extractor — usually the quickest source that yields a merged stream.
+     *  2. Lightweight public APIs (Piped / Invidious / Cobalt) raced **in parallel** with a hard
+     *     per-provider timeout. The old sequential chain could keep the player spinning for tens
+     *     of seconds; the race bounds the wait to a couple of seconds and cancels the losers.
+     *  3. The complete legacy chain ([getStreams], including yt-dlp) as the last resort.
+     *
+     * DownloadViewModel keeps using [getStreams] unchanged, so download selection and
+     * reliability are not affected by this fast path.
      */
     suspend fun getPlaybackStream(videoId: String): StreamInfo? = withContext(Dispatchers.IO) {
         val source = videoId.trim()
@@ -131,29 +144,241 @@ class SearchRepository {
         val startedAt = android.os.SystemClock.elapsedRealtime()
         try {
             resolveNewPipePlaybackStream(source)?.let { info ->
-                playbackStreamCache.put(
-                    cacheKey,
-                    CachedPlaybackStream(info, android.os.SystemClock.elapsedRealtime() + 60_000L)
-                )
+                cachePlaybackStream(cacheKey, info)
                 Log.d(TAG, "Playback stream resolved by NewPipe in ${android.os.SystemClock.elapsedRealtime() - startedAt}ms")
                 return@withContext info
             }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Log.w(TAG, "Fast NewPipe playback resolution failed; using full fallback chain", e)
+            Log.w(TAG, "Fast NewPipe playback resolution failed; racing parallel fallbacks", e)
+        }
+
+        // Parallel, time-bounded fallbacks (Piped / Invidious / Cobalt).
+        val raceStartedAt = android.os.SystemClock.elapsedRealtime()
+        try {
+            val cleanId = extractCleanVideoId(source)
+            val fullUrl = if (source.startsWith("http", ignoreCase = true)) {
+                source
+            } else {
+                "https://www.youtube.com/watch?v=$source"
+            }
+            val racedUrl = racePlaybackFallbacks(fullUrl = fullUrl, cleanId = cleanId)
+            if (!racedUrl.isNullOrBlank()) {
+                val info = StreamInfo(
+                    videoId = source,
+                    title = "",
+                    primaryPlayUrl = racedUrl,
+                    videoUrl = racedUrl,
+                    audioUrl = null,
+                    uploader = "",
+                    thumbnailUrl = "https://img.youtube.com/vi/$cleanId/hqdefault.jpg",
+                    durationSeconds = 0L
+                )
+                cachePlaybackStream(cacheKey, info)
+                Log.d(TAG, "Playback stream resolved by parallel fallback in ${android.os.SystemClock.elapsedRealtime() - raceStartedAt}ms")
+                return@withContext info
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "Parallel playback fallbacks failed", e)
         }
 
         val fallbackStartedAt = android.os.SystemClock.elapsedRealtime()
         val info = getStreams(source)
         if (!info?.primaryPlayUrl.isNullOrBlank()) {
-            playbackStreamCache.put(
-                cacheKey,
-                CachedPlaybackStream(info!!, android.os.SystemClock.elapsedRealtime() + 60_000L)
-            )
+            cachePlaybackStream(cacheKey, info!!)
             Log.d(TAG, "Playback fallback resolved in ${android.os.SystemClock.elapsedRealtime() - fallbackStartedAt}ms")
         }
         info
+    }
+
+    /** Keeps a resolved playback URL warm long enough for the search → tap flow. */
+    private fun cachePlaybackStream(cacheKey: String, info: StreamInfo) {
+        playbackStreamCache.put(
+            cacheKey,
+            CachedPlaybackStream(info, android.os.SystemClock.elapsedRealtime() + PLAYBACK_CACHE_TTL_MS)
+        )
+    }
+
+    /** Extracts a bare video id whether the caller passed an id or a full URL. */
+    private fun extractCleanVideoId(source: String): String {
+        if (!source.startsWith("http", ignoreCase = true)) return source
+        return source.substringAfter("v=", "")
+            .substringBefore("&")
+            .substringBefore("?")
+            .ifBlank { source.substringAfterLast("/").substringBefore("?").substringBefore("&") }
+    }
+
+    /**
+     * Races every lightweight fallback provider at once and returns the first direct URL.
+     * A provider that fails or times out reports null and never blocks the others.
+     */
+    private suspend fun racePlaybackFallbacks(
+        fullUrl: String,
+        cleanId: String,
+        timeoutMs: Long = PROVIDER_TIMEOUT_MS
+    ): String? = coroutineScope {
+        val producers = mutableListOf<suspend () -> String?>()
+        FAST_PIPED_INSTANCES.forEach { producers += pipedPlayUrlProducer(it, cleanId) }
+        FAST_INVIDIOUS_INSTANCES.forEach { producers += invidiousPlayUrlProducer(it, cleanId) }
+        FAST_COBALT_INSTANCES.forEach { producers += cobaltPlayUrlProducer(it, fullUrl) }
+
+        val results = Channel<String?>(producers.size)
+        val jobs = producers.map { producer ->
+            launch(Dispatchers.IO) {
+                val value = try {
+                    withTimeout(timeoutMs) { producer() }
+                } catch (e: TimeoutCancellationException) {
+                    Log.w(TAG, "Fallback provider timed out after ${timeoutMs}ms")
+                    null
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(TAG, "Fallback provider failed: ${e.message}")
+                    null
+                }
+                try {
+                    results.send(value)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    // The race already finished (channel closed) — nothing left to report.
+                }
+            }
+        }
+
+        try {
+            repeat(producers.size) {
+                val candidate = results.receive()
+                if (!candidate.isNullOrBlank()) return@coroutineScope candidate
+            }
+            null
+        } finally {
+            jobs.forEach { it.cancel() }
+            results.close()
+        }
+    }
+
+    /** Piped `/streams/{id}`: muxed (video+audio) first, then any video, then audio. */
+    private fun pipedPlayUrlProducer(baseUrl: String, cleanId: String): suspend () -> String? = {
+        val request = Request.Builder()
+            .url("$baseUrl/streams/$cleanId")
+            .header("User-Agent", "Mozilla/5.0")
+            .build()
+        NetworkModule.okHttpClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                null
+            } else {
+                val bodyString = response.body?.string().orEmpty()
+                val json = NetworkModule.json.parseToJsonElement(bodyString).jsonObject
+                val videoStreams = json["videoStreams"]?.jsonArray
+                val audioStreams = json["audioStreams"]?.jsonArray
+
+                val muxed = videoStreams?.firstOrNull { element ->
+                    val mime = element.jsonObject["mimeType"]?.jsonPrimitive?.content ?: ""
+                    val videoOnly = element.jsonObject["videoOnly"]?.jsonPrimitive?.content?.toBoolean() ?: false
+                    mime.contains("mp4") && !videoOnly
+                }?.jsonObject?.get("url")?.jsonPrimitive?.content
+                val anyVideo = videoStreams?.firstOrNull { element ->
+                    val mime = element.jsonObject["mimeType"]?.jsonPrimitive?.content ?: ""
+                    mime.contains("mp4")
+                }?.jsonObject?.get("url")?.jsonPrimitive?.content
+                val anyAudio = audioStreams?.firstOrNull { element ->
+                    val mime = element.jsonObject["mimeType"]?.jsonPrimitive?.content ?: ""
+                    mime.contains("mp4") || mime.contains("m4a")
+                }?.jsonObject?.get("url")?.jsonPrimitive?.content
+
+                muxed ?: anyVideo ?: anyAudio
+            }
+        }
+    }
+
+    /** Invidious `/api/v1/videos/{id}`: muxed `formatStreams` first, then adaptive formats. */
+    private fun invidiousPlayUrlProducer(baseUrl: String, cleanId: String): suspend () -> String? = {
+        val request = Request.Builder()
+            .url("$baseUrl/api/v1/videos/$cleanId")
+            .header("User-Agent", "Mozilla/5.0")
+            .build()
+        NetworkModule.okHttpClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                null
+            } else {
+                val bodyString = response.body?.string().orEmpty()
+                val json = NetworkModule.json.parseToJsonElement(bodyString).jsonObject
+                val formatStreams = json["formatStreams"]?.jsonArray
+                val adaptiveFormats = json["adaptiveFormats"]?.jsonArray
+
+                val muxed = formatStreams?.firstOrNull { element ->
+                    val container = element.jsonObject["container"]?.jsonPrimitive?.content ?: ""
+                    container.contains("mp4")
+                }?.jsonObject?.get("url")?.jsonPrimitive?.content
+                val adaptiveVideo = adaptiveFormats?.firstOrNull { element ->
+                    val type = element.jsonObject["type"]?.jsonPrimitive?.content ?: ""
+                    type.contains("video/mp4")
+                }?.jsonObject?.get("url")?.jsonPrimitive?.content
+                val adaptiveAudio = adaptiveFormats?.firstOrNull { element ->
+                    val type = element.jsonObject["type"]?.jsonPrimitive?.content ?: ""
+                    type.contains("audio")
+                }?.jsonObject?.get("url")?.jsonPrimitive?.content
+
+                muxed ?: adaptiveVideo ?: adaptiveAudio
+            }
+        }
+    }
+
+    /** Cobalt API: returns an already merged direct URL. */
+    private fun cobaltPlayUrlProducer(baseUrl: String, fullUrl: String): suspend () -> String? = {
+        val mediaType = "application/json; charset=utf-8".toMediaType()
+        val body = """{"url":"$fullUrl"}""".toRequestBody(mediaType)
+        val request = Request.Builder()
+            .url(baseUrl)
+            .header("Accept", "application/json")
+            .header("Content-Type", "application/json")
+            .header("User-Agent", "Mozilla/5.0")
+            .post(body)
+            .build()
+        NetworkModule.okHttpClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                null
+            } else {
+                val bodyString = response.body?.string().orEmpty()
+                val json = NetworkModule.json.parseToJsonElement(bodyString).jsonObject
+                val status = json["status"]?.jsonPrimitive?.content ?: ""
+                val directUrl = json["url"]?.jsonPrimitive?.content
+                val pickerUrl = json["picker"]?.jsonArray?.firstOrNull()?.jsonObject?.get("url")?.jsonPrimitive?.content
+                if ((status == "tunnel" || status == "redirect" || status == "stream") && !directUrl.isNullOrEmpty()) {
+                    directUrl
+                } else {
+                    pickerUrl
+                }
+            }
+        }
+    }
+
+    private companion object {
+        /** Resolved playback URLs stay cached this long so search → tap stays instant. */
+        private const val PLAYBACK_CACHE_TTL_MS = 300_000L
+
+        /** Hard per-provider timeout inside the parallel race. */
+        private const val PROVIDER_TIMEOUT_MS = 7_000L
+
+        /** A reduced, reliable subset is enough — the race needs speed, not breadth. */
+        private val FAST_PIPED_INSTANCES = listOf(
+            "https://pipedapi.kavin.rocks",
+            "https://pipedapi.adminforge.de",
+            "https://pipedapi.drgns.space"
+        )
+        private val FAST_INVIDIOUS_INSTANCES = listOf(
+            "https://invidious.nerdvpn.de",
+            "https://inv.tux.stream",
+            "https://invidious.drgns.space"
+        )
+        private val FAST_COBALT_INSTANCES = listOf(
+            "https://api.cobalt.tools",
+            "https://co.wuk.sh"
+        )
     }
 
     private fun resolveNewPipePlaybackStream(videoId: String): StreamInfo? {

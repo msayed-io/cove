@@ -105,9 +105,18 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     private var searchJob: Job? = null
     private var suggestionsJob: Job? = null
 
+    /**
+     * Background warm-up for the first search result.
+     *
+     * Resolving a playable stream takes a moment; doing it right after the results render means
+     * tapping the top result starts playback immediately instead of waiting on the resolver.
+     */
+    private var playbackWarmUpJob: Job? = null
+
     // Use cases from NetworkModule (Manual DI)
     private val searchUseCase = NetworkModule.searchUseCase
     private val getStreamUseCase = NetworkModule.getStreamUseCase
+    private val getPlaybackStreamUseCase = NetworkModule.getPlaybackStreamUseCase
     private val getSuggestionsUseCase = NetworkModule.getSuggestionsUseCase
 
     fun onQueryChange(newQuery: String, fetchAutocomplete: Boolean = true) {
@@ -184,6 +193,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                         SearchUiState.Error("لا توجد نتائج مطابقة لبحثك...")
                     }
                 } else {
+                    warmUpFirstResultPlayback(filteredResults)
                     SearchUiState.Success(filteredResults)
                 }
             } catch (e: Exception) {
@@ -224,5 +234,24 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     
     fun resetResolveState() {
         _resolveState.value = StreamResolveState.Idle
+    }
+
+    /**
+     * Pre-resolves the stream URL of the first result (silently, in the background) so the very
+     * first tap on a search result plays instantly. Any previous warm-up is cancelled first, and
+     * failures stay invisible — the normal resolver still runs when the user actually taps.
+     */
+    private fun warmUpFirstResultPlayback(results: List<SearchResult>) {
+        val first = results.firstOrNull() ?: return
+        playbackWarmUpJob?.cancel()
+        playbackWarmUpJob = viewModelScope.launch {
+            try {
+                getPlaybackStreamUseCase(first.videoId)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // Warm-up is best-effort only.
+            }
+        }
     }
 }
