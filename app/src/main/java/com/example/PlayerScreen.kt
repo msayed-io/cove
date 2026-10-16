@@ -295,11 +295,9 @@ fun FullPlayerScreen(
                     }
                 }
 
-                AnimatedVisibility(
+                PlayerControlsFade(
                     visible = controlsVisible,
-                    modifier = Modifier.fillMaxSize(),
-                    enter = fadeIn(),
-                    exit = fadeOut()
+                    modifier = Modifier.fillMaxSize()
                 ) {
                     Box(modifier = Modifier.fillMaxSize()) {
                         Box(
@@ -621,6 +619,30 @@ fun FullPlayerScreen(
                 }
             )
         }
+    }
+}
+
+/**
+ * Fades the video stage overlay in and out.
+ *
+ * A dedicated wrapper is required because `AnimatedVisibility` also exists as a
+ * `ColumnScope`/`RowScope` extension, and calling that variant from inside the stage's
+ * `Box` (which sits in a `Column`) is rejected by Compose's DSL scoping rules. Declaring the
+ * call in a scope-free composable always resolves to the plain top-level overload.
+ */
+@Composable
+private fun PlayerControlsFade(
+    visible: Boolean,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit
+) {
+    androidx.compose.animation.AnimatedVisibility(
+        visible = visible,
+        modifier = modifier,
+        enter = fadeIn(),
+        exit = fadeOut()
+    ) {
+        content()
     }
 }
 
