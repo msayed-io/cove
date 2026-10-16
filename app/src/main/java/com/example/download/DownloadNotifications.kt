@@ -37,6 +37,22 @@ object DownloadNotifications {
 
     private const val TAG = "CoveNotifications"
 
+    /** أيقونة التطبيق الرسمية، تُفكّ مرة واحدة وتُخزَّن — لتظهر الشعار في لوحة الإشعارات. */
+    @Volatile
+    private var cachedAppIcon: Bitmap? = null
+
+    private fun appIcon(context: Context): Bitmap? {
+        if (cachedAppIcon != null) return cachedAppIcon
+        try {
+            val icon = BitmapFactory.decodeResource(context.resources, R.mipmap.ic_launcher)
+            cachedAppIcon = icon
+            return icon
+        } catch (t: Throwable) {
+            Log.w(TAG, "Failed to decode the app icon", t)
+            return null
+        }
+    }
+
     /** Silent channel used by the ongoing/progress notification. */
     const val CHANNEL_PROGRESS = "cove_download_progress_channel"
 
@@ -216,9 +232,7 @@ object DownloadNotifications {
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setGroup(GROUP_KEY)
 
-            if (thumbnailBitmap != null) {
-                builder.setLargeIcon(thumbnailBitmap)
-            }
+            builder.setLargeIcon(thumbnailBitmap ?: appIcon(context))
 
             manager.notify(resultNotificationId(downloadId), builder.build())
         } catch (t: Throwable) {
@@ -231,6 +245,7 @@ object DownloadNotifications {
             ensureChannels(context)
             val builder = NotificationCompat.Builder(context, CHANNEL_COMPLETE)
                 .setSmallIcon(android.R.drawable.stat_notify_error)
+                .setLargeIcon(appIcon(context))
                 .setContentTitle(title)
                 .setContentText(message)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(message))
