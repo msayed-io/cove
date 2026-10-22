@@ -1055,7 +1055,7 @@ class DownloadRepository {
         val retriever = android.media.MediaMetadataRetriever()
         return try {
             retriever.setDataSource(file.absolutePath)
-            !retriever.embeddedPicture.isNullOrEmpty()
+            retriever.embeddedPicture?.isNotEmpty() == true
         } catch (e: Exception) {
             Log.w("DownloadRepository", "Could not verify embedded audio artwork", e)
             false
