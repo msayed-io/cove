@@ -517,17 +517,24 @@ fun MainScreen(viewModel: DownloadViewModel, searchViewModel: SearchViewModel, m
                                     val searchState by searchViewModel.state.collectAsState()
 
                                     if (suggestionsActive) {
-                                        SearchSuggestionsPanel(
-                                            suggestions = suggestionList,
-                                            loading = suggestionsLoading,
+                                        Row(
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .padding(horizontal = 16.dp),
-                                            onSelect = { suggestion ->
-                                                searchViewModel.performSearch(suggestion)
-                                                focusManager.clearFocus()
-                                            }
-                                        )
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                        ) {
+                                            // Align under the input capsule, after the 42 dp exit button and its gap.
+                                            Spacer(Modifier.width(52.dp))
+                                            SearchSuggestionsPanel(
+                                                suggestions = suggestionList,
+                                                loading = suggestionsLoading,
+                                                modifier = Modifier.weight(1f),
+                                                onSelect = { suggestion ->
+                                                    searchViewModel.performSearch(suggestion)
+                                                    focusManager.clearFocus()
+                                                }
+                                            )
+                                        }
                                     } else if (searchState is SearchUiState.Idle && searchQuery.isEmpty()) {
                                         // Keep the current empty state while the search field is untouched.
                                     } else {

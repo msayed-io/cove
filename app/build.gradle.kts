@@ -118,6 +118,8 @@ dependencies {
   implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.26.3")
   implementation("io.github.junkfood02.youtubedl-android:library:0.18.1")
   implementation("io.github.junkfood02.youtubedl-android:ffmpeg:0.18.1")
+  // FFmpeg 0.18.1's librubberband.so needs libc++_shared.so, missing from its AAR.
+  implementation("dev.atsushieno:libcxx-provider:29.0.14206865")
   implementation("io.github.junkfood02.youtubedl-android:aria2c:0.18.1")
   coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.0.4")
   testImplementation(libs.androidx.compose.ui.test.junit4)

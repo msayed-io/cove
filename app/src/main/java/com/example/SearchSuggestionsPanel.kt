@@ -25,12 +25,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.ui.theme.CG
+import com.example.ui.theme.CoveArabic
 
-/** A fixed-height, search-bar-width dropdown shared by home and full search. */
+/** Suggestions dropdown shared by home and search, sized to sit directly under its search field. */
 @Composable
 internal fun SearchSuggestionsPanel(
     suggestions: List<String>,
@@ -38,35 +40,41 @@ internal fun SearchSuggestionsPanel(
     modifier: Modifier = Modifier,
     onSelect: (String) -> Unit
 ) {
-    val shape = RoundedCornerShape(
-        topStart = 9.dp,
-        topEnd = 9.dp,
-        bottomStart = 22.dp,
-        bottomEnd = 22.dp
-    )
     val visibleSuggestions = suggestions.take(5)
+    val panelHeight = when {
+        loading -> 68.dp
+        visibleSuggestions.isEmpty() -> 68.dp
+        else -> (visibleSuggestions.size * 50 + 4).coerceAtMost(254).dp
+    }
+    val shape = RoundedCornerShape(
+        topStart = 0.dp,
+        topEnd = 0.dp,
+        bottomStart = 18.dp,
+        bottomEnd = 18.dp
+    )
 
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .height(240.dp)
+            .height(panelHeight)
             .clip(shape)
-            .background(Color(0xF2141518))
-            .border(1.dp, Color.White.copy(alpha = 0.10f), shape)
+            .background(CG.Card)
+            .border(1.dp, CG.Border10, shape)
     ) {
         when {
             loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(
-                    modifier = Modifier.size(24.dp),
-                    color = Color(0xFFF1F5F9),
+                    modifier = Modifier.size(22.dp),
+                    color = CG.CobaltGlow,
                     strokeWidth = 2.dp
                 )
             }
             visibleSuggestions.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
                     text = "لا توجد اقتراحات الآن",
-                    color = Color(0xFF94A3B8),
-                    fontSize = 14.sp
+                    color = CG.TextMuted,
+                    fontSize = 13.sp,
+                    fontFamily = CoveArabic
                 )
             }
             else -> LazyColumn(
@@ -74,36 +82,38 @@ internal fun SearchSuggestionsPanel(
                 verticalArrangement = Arrangement.Top
             ) {
                 itemsIndexed(visibleSuggestions) { index, suggestion ->
-                    Column {
-                        Row(
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(50.dp)
+                            .clickable { onSelect(suggestion) }
+                            .padding(horizontal = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Search,
+                            contentDescription = null,
+                            tint = CG.CobaltGlow,
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .height(47.dp)
-                                .clickable { onSelect(suggestion) }
-                                .padding(horizontal = 16.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Search,
-                                contentDescription = null,
-                                tint = Color(0xFF94A3B8),
-                                modifier = Modifier.padding(end = 12.dp)
-                            )
-                            Text(
-                                text = suggestion,
-                                color = Color(0xFFF1F5F9),
-                                fontSize = 15.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                        if (index < visibleSuggestions.lastIndex) {
-                            HorizontalDivider(
-                                modifier = Modifier.padding(horizontal = 16.dp),
-                                color = Color.White.copy(alpha = 0.07f),
-                                thickness = 0.5.dp
-                            )
-                        }
+                                .padding(end = 11.dp)
+                                .size(17.dp)
+                        )
+                        Text(
+                            text = suggestion,
+                            color = CG.TextPrimary,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            fontFamily = CoveArabic,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    if (index < visibleSuggestions.lastIndex) {
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 14.dp),
+                            color = CG.Divider05,
+                            thickness = 0.5.dp
+                        )
                     }
                 }
             }

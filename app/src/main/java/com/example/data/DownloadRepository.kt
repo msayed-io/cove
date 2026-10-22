@@ -1,5 +1,6 @@
 package com.example.data
 
+import android.graphics.BitmapFactory
 import android.os.Build
 import android.os.Environment
 import android.util.Log
@@ -9,6 +10,8 @@ import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLRequest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -31,6 +34,8 @@ class DownloadRepository {
 
     /** In-flight HTTP calls so a running download can be cancelled on demand. */
     private val activeCalls = ConcurrentHashMap<Long, okhttp3.Call>()
+    /** FFmpeg post-processing processes, cancelled through the same download action. */
+    private val activeArtworkProcesses = ConcurrentHashMap<Long, Process>()
 
     /** Downloads the user cancelled explicitly (never reported as failures). */
     private val cancelledByUser = ConcurrentHashMap.newKeySet<Long>()
@@ -58,7 +63,7 @@ class DownloadRepository {
         } else {
             File(Environment.getExternalStorageDirectory(), "Cove")
         }
-        
+
         // Test if we can write to this directory. If not, use external files dir as robust fallback.
         try {
             if (!baseDir.exists()) {
@@ -72,7 +77,7 @@ class DownloadRepository {
         } catch (e: Exception) {
             Log.e("DownloadRepository", "Cannot write to public directory, falling back to app-specific external storage", e)
         }
-        
+
         // Fallback to app-specific external storage which is always writable without permissions
         if (targetCtx != null) {
             val appSpecificDir = File(targetCtx.getExternalFilesDir(null), "Cove")
@@ -87,7 +92,7 @@ class DownloadRepository {
     fun scanDownloadedFiles() {
         try {
             // Capture currently active downloading items or failed items so they don't disappear from the UI
-            val activeItems = downloadsFlow.value.filter { 
+            val activeItems = downloadsFlow.value.filter {
                 val isDownloading = it.progress < 1f && !it.statusText.contains("فشل") && it.statusText != "اكتمل بنجاح"
                 val isFailed = it.statusText.contains("فشل")
                 isDownloading || isFailed
@@ -96,19 +101,19 @@ class DownloadRepository {
 
             val items = mutableListOf<DownloadItem>()
             val subFolders = listOf("Cove Video", "Cove Audio", "Cove Image")
-            
+
             // Scan the root directory, public downloads folder, and app-specific files directory so no files are lost
             val rootDir = File(Environment.getExternalStorageDirectory(), "Cove")
             val fallbackDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Cove")
             val appSpecificDir = com.example.api.NetworkModule.applicationContext?.let { File(it.getExternalFilesDir(null), "Cove") }
-            
+
             val directoriesToScan = mutableListOf<File>()
             directoriesToScan.add(rootDir)
             directoriesToScan.add(fallbackDir)
             if (appSpecificDir != null) {
                 directoriesToScan.add(appSpecificDir)
             }
-            
+
             val scannedPaths = mutableSetOf<String>()
 
             for (baseDir in directoriesToScan) {
@@ -121,9 +126,9 @@ class DownloadRepository {
                             if (file.isFile && file.length() > 0 && !scannedPaths.contains(file.absolutePath)) {
                                 scannedPaths.add(file.absolutePath)
 
-                                // الصور المصغرة المرافقة (.thumb.jpg) ليست وسائط مستقلة — لا تُعرض كعنصر منفصل
-                                if (file.name.endsWith(".thumb.jpg")) continue
-                                
+                                // Companion thumbnails and in-progress atomic replacement files are not media items.
+                                if (file.name.endsWith(".thumb.jpg") || file.name.startsWith(".cove-cover-")) continue
+
                                 // If this path is currently being downloaded actively, do NOT replace it with a completed state from disk scan
                                 if (activePaths.contains(file.absolutePath)) {
                                     continue
@@ -132,18 +137,19 @@ class DownloadRepository {
                                 val name = file.name
                                 val isVideo = subFolderName == "Cove Video"
                                 val isAudio = subFolderName == "Cove Audio"
-                                
-                                val cleanTitle = if (name.startsWith("Media_")) {
+
+                                var cleanTitle = name
+                                if (name.startsWith("Media_")) {
                                     val parts = name.split("_")
                                     if (parts.size >= 3) {
-                                        parts.drop(2).joinToString("_").substringBeforeLast(".")
-                                    } else {
-                                        name.substringBeforeLast(".")
+                                        val titleWithExt = parts.drop(2).joinToString("_")
+                                        cleanTitle = titleWithExt.substringBeforeLast(".")
                                     }
-                                } else {
-                                    name.substringBeforeLast(".")
-                                }.ifBlank { name.substringBeforeLast(".") }
-                                
+                                }
+                                if (cleanTitle.isEmpty()) {
+                                    cleanTitle = name.substringBeforeLast(".")
+                                }
+
                                 val companionThumb = File(file.parentFile, file.name.substringBeforeLast(".") + ".thumb.jpg")
                                 val thumbPath = if (companionThumb.exists()) companionThumb.absolutePath else (if (!isVideo && !isAudio) file.absolutePath else null)
 
@@ -164,10 +170,10 @@ class DownloadRepository {
                     }
                 }
             }
-            
+
             // Add all the active items to the final scanned list
             items.addAll(activeItems)
-            
+
             items.sortByDescending { it.timestamp }
             synchronized(flowLock) {
                 downloadsFlow.value = items
@@ -175,6 +181,192 @@ class DownloadRepository {
         } catch (e: Exception) {
             Log.e("DownloadRepository", "Failed to scan downloaded files", e)
         }
+    }
+
+    /**
+     * Finds the largest usable YouTube thumbnail, then writes it as an attached ID3 picture.
+     * FFmpeg works on a temporary output so a processing failure never damages the downloaded audio.
+     */
+    private suspend fun embedYouTubeArtwork(
+        context: android.content.Context,
+        downloadId: Long,
+        videoUrl: String,
+        fallbackThumbnailUrl: String?,
+        audioFile: File
+    ) {
+        val coverFile = downloadBestYouTubeCover(
+            context = context,
+            downloadId = downloadId,
+            videoUrl = videoUrl,
+            fallbackThumbnailUrl = fallbackThumbnailUrl
+        ) ?: throw IllegalStateException("تعذر جلب صورة غلاف صالحة")
+
+        val temporaryAudio = File(audioFile.parentFile, ".cove-cover-$downloadId.tmp.mp3")
+        var process: Process? = null
+        try {
+            // This extracts the FFmpeg shared-library package from the AAR into noBackupFilesDir.
+            com.yausername.ffmpeg.FFmpeg.getInstance().init(context)
+
+            val ffmpeg = File(context.applicationInfo.nativeLibraryDir, "libffmpeg.so")
+            val ffmpegLibraryDir = File(context.noBackupFilesDir, "youtubedl-android/packages/ffmpeg/usr/lib")
+            if (!ffmpeg.isFile || !ffmpegLibraryDir.isDirectory) {
+                throw IllegalStateException("FFmpeg runtime is not initialized")
+            }
+
+            temporaryAudio.delete()
+            val command = listOf(
+                ffmpeg.absolutePath,
+                "-hide_banner", "-loglevel", "error", "-y",
+                "-i", audioFile.absolutePath,
+                "-i", coverFile.absolutePath,
+                "-map", "0:a:0",
+                "-map", "1:v:0",
+                "-map_metadata", "0",
+                "-c:a", "libmp3lame", "-q:a", "0",
+                "-c:v", "copy",
+                "-metadata:s:v:0", "title=Album cover",
+                "-metadata:s:v:0", "comment=Cover (front)",
+                "-disposition:v:0", "attached_pic",
+                "-id3v2_version", "3",
+                temporaryAudio.absolutePath
+            )
+            val libraryPaths = listOf(
+                context.applicationInfo.nativeLibraryDir,
+                ffmpegLibraryDir.absolutePath,
+                File(context.noBackupFilesDir, "youtubedl-android/packages/python/usr/lib").absolutePath
+            )
+            val ffmpegProcess = ProcessBuilder(command)
+                .redirectErrorStream(true)
+                .apply {
+                    environment()["LD_LIBRARY_PATH"] = libraryPaths.joinToString(File.pathSeparator)
+                    environment()["TMPDIR"] = context.cacheDir.absolutePath
+                    environment()["HOME"] = context.noBackupFilesDir.absolutePath
+                }
+                .start()
+            process = ffmpegProcess
+            activeArtworkProcesses[downloadId] = ffmpegProcess
+
+            val processOutput = ffmpegProcess.inputStream.bufferedReader().use { it.readText() }
+            val exitCode = ffmpegProcess.waitFor()
+            currentCoroutineContext().ensureActive()
+            if (isCancelledByUser(downloadId)) {
+                throw kotlinx.coroutines.CancellationException("تم إلغاء التنزيل")
+            }
+            if (exitCode != 0) {
+                throw IllegalStateException("FFmpeg artwork merge exited with $exitCode: ${processOutput.takeLast(800)}")
+            }
+            if (!temporaryAudio.isFile || temporaryAudio.length() == 0L || !hasEmbeddedArtwork(temporaryAudio)) {
+                throw IllegalStateException("تعذر التحقق من الغلاف المضمّن في ملف الصوت الناتج")
+            }
+
+            // Same-directory rename is atomic and replaces the original only after validation.
+            android.system.Os.rename(temporaryAudio.absolutePath, audioFile.absolutePath)
+        } finally {
+            process?.let { running ->
+                activeArtworkProcesses.remove(downloadId, running)
+                running.destroy()
+            }
+            coverFile.delete()
+            temporaryAudio.delete()
+        }
+    }
+
+    /** Downloads YouTube's best available stills and returns the largest valid image. */
+    private suspend fun downloadBestYouTubeCover(
+        context: android.content.Context,
+        downloadId: Long,
+        videoUrl: String,
+        fallbackThumbnailUrl: String?
+    ): File? {
+        val candidates = linkedSetOf<String>()
+        extractYouTubeVideoId(videoUrl)?.let { id ->
+            listOf("maxresdefault", "hq720", "sddefault", "hqdefault").forEach { name ->
+                candidates += "https://i.ytimg.com/vi/$id/$name.jpg"
+            }
+        }
+        fallbackThumbnailUrl?.takeIf { it.isNotBlank() }?.let(candidates::add)
+
+        var bestFile: File? = null
+        var bestArea = 0L
+        try {
+            for ((index, candidate) in candidates.withIndex()) {
+                currentCoroutineContext().ensureActive()
+                val file = File.createTempFile("cove-cover-${downloadId}-${index}-", ".jpg", context.cacheDir)
+                var keepFile = false
+                try {
+                    val request = Request.Builder()
+                        .url(candidate)
+                        .header("User-Agent", "Mozilla/5.0")
+                        .build()
+                    val call = com.example.api.NetworkModule.okHttpClient.newCall(request)
+                    activeCalls[downloadId] = call
+                    call.execute().use { response ->
+                        if (!response.isSuccessful) return@use
+                        val body = response.body ?: return@use
+                        body.byteStream().use { input ->
+                            java.io.FileOutputStream(file).use { output ->
+                                val buffer = ByteArray(16 * 1024)
+                                var total = 0L
+                                while (true) {
+                                    val count = input.read(buffer)
+                                    if (count < 0) break
+                                    total += count
+                                    if (total > 12L * 1024 * 1024) {
+                                        throw java.io.IOException("thumbnail exceeds size limit")
+                                    }
+                                    output.write(buffer, 0, count)
+                                }
+                            }
+                        }
+                    }
+                    activeCalls.remove(downloadId)
+
+                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    BitmapFactory.decodeFile(file.absolutePath, bounds)
+                    val width = bounds.outWidth
+                    val height = bounds.outHeight
+                    val area = if (width > 0 && height > 0) width.toLong() * height.toLong() else 0L
+                    if (area > bestArea) {
+                        bestFile?.delete()
+                        bestFile = file
+                        bestArea = area
+                        keepFile = true
+                    }
+                    // Stop once we have a genuinely high-resolution frame.
+                    if (bestArea >= 1280L * 720L) return bestFile
+                } catch (error: Exception) {
+                    if (error is kotlinx.coroutines.CancellationException || isCancelledByUser(downloadId)) {
+                        throw kotlinx.coroutines.CancellationException("تم إلغاء التنزيل")
+                    }
+                    Log.w("DownloadRepository", "Could not fetch YouTube cover candidate $candidate", error)
+                } finally {
+                    activeCalls.remove(downloadId)
+                    if (!keepFile) file.delete()
+                }
+            }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            bestFile?.delete()
+            throw cancelled
+        }
+        return bestFile
+    }
+
+    private fun hasEmbeddedArtwork(file: File): Boolean {
+        val retriever = android.media.MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(file.absolutePath)
+            retriever.embeddedPicture?.isNotEmpty() == true
+        } catch (error: Exception) {
+            Log.w("DownloadRepository", "Could not verify embedded audio artwork", error)
+            false
+        } finally {
+            runCatching { retriever.release() }
+        }
+    }
+
+    private fun isYouTubeUrl(url: String): Boolean {
+        val lower = url.lowercase()
+        return lower.contains("youtube.com") || lower.contains("youtu.be")
     }
 
     private fun isDirectFileUrl(url: String): Boolean {
@@ -303,7 +495,7 @@ class DownloadRepository {
                     if (response.isSuccessful) {
                         val body = response.body?.string() ?: return@use
                         val json = com.example.api.NetworkModule.json.parseToJsonElement(body).jsonObject
-                        
+
                         if (isAudioOnly) {
                             val adaptive = json["adaptiveFormats"]?.jsonArray
                             val audioFormat = adaptive?.firstOrNull { elem ->
@@ -384,7 +576,7 @@ class DownloadRepository {
             try {
                 val streamExtractor = org.schabi.newpipe.extractor.ServiceList.YouTube.getStreamExtractor(url)
                 streamExtractor.fetchPage()
-                
+
                 if (isAudioOnly) {
                     val audioStreams = streamExtractor.audioStreams
                     val bestAudio = audioStreams?.firstOrNull { it.getFormat()?.getName()?.contains("m4a", true) == true }
@@ -530,18 +722,16 @@ class DownloadRepository {
             File(preferredPath)
         } else {
             val extension = if (isAudioOnly) "mp3" else (if (isVideo) "mp4" else "jpg")
+            val sanitizedTitle = title.take(30).replace(Regex("[^\\w\\s\\u0600-\\u06FF]"), "").trim()
+            val fileName = "Media_${System.currentTimeMillis()}_$sanitizedTitle.$extension"
+
             val coveDir = getCoveBaseDir(context)
             val subDirName = if (isAudioOnly) "Cove Audio" else (if (isVideo) "Cove Video" else "Cove Image")
             val targetDir = File(coveDir, subDirName)
             if (!targetDir.exists()) {
                 targetDir.mkdirs()
             }
-            if (isAudioOnly) {
-                nextAudioOutputFile(targetDir, title)
-            } else {
-                val sanitizedTitle = title.take(30).replace(Regex("[^\\w\\s\\u0600-\\u06FF]"), "").trim()
-                File(targetDir, "Media_${System.currentTimeMillis()}_$sanitizedTitle.$extension")
-            }
+            File(targetDir, fileName)
         }
 
         return DownloadItem(
@@ -581,6 +771,11 @@ class DownloadRepository {
             YoutubeDL.getInstance().destroyProcessById(id.toString())
         } catch (t: Throwable) {
             Log.w("DownloadRepository", "Failed to destroy yt-dlp process for $id", t)
+        }
+        try {
+            activeArtworkProcesses.remove(id)?.destroy()
+        } catch (t: Throwable) {
+            Log.w("DownloadRepository", "Failed to stop FFmpeg artwork process for $id", t)
         }
     }
 
@@ -632,13 +827,12 @@ class DownloadRepository {
         updateItem(downloadId) { it.copy(statusText = "جاري التحضير...") }
 
         try {
-            // YouTube audio must go through yt-dlp/FFmpeg so it is truly converted to MP3
-            // and receives its ID3 metadata and embedded cover; a raw CDN stream is not an MP3.
+            // Keep v1.2.12's direct-resolution-first download flow for audio and video.
             val youtubeAudio = isAudioOnly && isYouTubeUrl(url)
             var targetUrl = url
-            var isResolvedDirect = isDirectFileUrl(url) && !youtubeAudio
+            var isResolvedDirect = isDirectFileUrl(url)
 
-            if (!isResolvedDirect && !youtubeAudio) {
+            if (!isResolvedDirect) {
                 val resolved = resolveDirectUrl(context, url, isVideo, isAudioOnly)
                 if (resolved != null) {
                     targetUrl = resolved
@@ -669,8 +863,25 @@ class DownloadRepository {
                 )
             }
 
-            // YouTube audio artwork is embedded in the MP3; do not create a second image file.
-            // Other media retain the companion thumbnail used by the existing gallery.
+            // Merge a high-resolution YouTube cover into the MP3 after the audio has been
+            // safely downloaded. Artwork failures never discard the working audio file.
+            if (youtubeAudio && outputFile.exists() && !hasEmbeddedArtwork(outputFile)) {
+                try {
+                    embedYouTubeArtwork(
+                        context = context,
+                        downloadId = downloadId,
+                        videoUrl = url,
+                        fallbackThumbnailUrl = thumbnailUrl,
+                        audioFile = outputFile
+                    )
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (artworkError: Exception) {
+                    Log.e("DownloadRepository", "Audio downloaded; cover embedding failed without cancelling the audio download", artworkError)
+                }
+            }
+
+            // Keep companion thumbnails for non-YouTube media. YouTube audio uses embedded art only.
             if (!youtubeAudio && !thumbnailUrl.isNullOrEmpty() && outputFile.exists()) {
                 try {
                     val companionThumb = File(outputFile.parentFile, outputFile.name.substringBeforeLast(".") + ".thumb.jpg")
@@ -925,7 +1136,6 @@ class DownloadRepository {
             request.addOption("--audio-format", "mp3")
             request.addOption("--audio-quality", "0")
             request.addOption("--embed-thumbnail")
-            request.addOption("--convert-thumbnails", "jpg")
             request.addOption("--add-metadata")
         } else if (isVideo) {
             // Critical: download highest quality MP4 format containing BOTH audio and video, or merge via best format
@@ -1014,9 +1224,6 @@ class DownloadRepository {
                     }
                 }
             } catch (ytdlErr: Exception) {
-                if (isAudioOnly && isYouTubeUrl(originalUrl)) {
-                    throw DownloadException(true, ytdlErr.message ?: "تعذر تحويل صوت يوتيوب إلى ملف صوتي")
-                }
                 Log.w("DownloadRepository", "YoutubeDL execute failed: ${ytdlErr.message}. Attempting fallback direct stream download...")
 
                 val emergencyUrl = resolveDirectUrl(context, originalUrl, isVideo, isAudioOnly)
@@ -1045,28 +1252,6 @@ class DownloadRepository {
                 telemetryCollector.join()
             }
         }
-
-        if (isAudioOnly && isYouTubeUrl(originalUrl) && !hasEmbeddedArtwork(outputFile)) {
-            throw DownloadException(false, "اكتمل التحويل لكن تعذر تضمين غلاف المقطع داخل الملف")
-        }
-    }
-
-    private fun hasEmbeddedArtwork(file: File): Boolean {
-        val retriever = android.media.MediaMetadataRetriever()
-        return try {
-            retriever.setDataSource(file.absolutePath)
-            retriever.embeddedPicture?.isNotEmpty() == true
-        } catch (e: Exception) {
-            Log.w("DownloadRepository", "Could not verify embedded audio artwork", e)
-            false
-        } finally {
-            runCatching { retriever.release() }
-        }
-    }
-
-    private fun isYouTubeUrl(url: String): Boolean {
-        val lower = url.lowercase()
-        return lower.contains("youtube.com") || lower.contains("youtu.be")
     }
 
     /** Current on-disk size of an in-flight yt-dlp download (handles .part temp files). */
@@ -1252,12 +1437,12 @@ class DownloadRepository {
 
     suspend fun fetchMediaInfo(url: String): com.example.domain.ScrapedMedia = withContext(Dispatchers.IO) {
         val lowerUrl = url.lowercase().trim()
-        
+
         // 0. Filter out search engines and empty URLs
         if (lowerUrl.isEmpty() || lowerUrl.contains("google.com/search") || lowerUrl.contains("google.com/?") || lowerUrl.contains("bing.com/search") || lowerUrl.contains("duckduckgo.com/?")) {
             throw Exception("الرابط المدخل عبارة عن صفحة بحث وليس فيديو أو ملف وسائط.")
         }
-        
+
         // 1. Check if the URL is a direct file link (extremely fast, zero overhead)
         val cleanDirect = lowerUrl.substringBefore("?").substringBefore("#")
         if (cleanDirect.endsWith(".jpg") || cleanDirect.endsWith(".jpeg") || cleanDirect.endsWith(".png") || cleanDirect.endsWith(".webp") || cleanDirect.endsWith(".gif") ||
@@ -1304,19 +1489,19 @@ class DownloadRepository {
         }
 
         val isYouTube = lowerUrl.contains("youtube.com") || lowerUrl.contains("youtu.be")
-        
+
         // 3. YouTube URLs handling
         if (isYouTube) {
             // A. NewPipe Extractor
             try {
                 val streamExtractor = org.schabi.newpipe.extractor.ServiceList.YouTube.getStreamExtractor(url)
                 streamExtractor.fetchPage()
-                
+
                 val videoStreams = streamExtractor.videoStreams
                 val bestVideo = videoStreams?.firstOrNull { it.getFormat()?.getName()?.contains("mp4", true) == true } ?: videoStreams?.firstOrNull()
                 val isVideoInfo = bestVideo != null
                 val finalUrl = bestVideo?.content ?: url
-                
+
                 return@withContext com.example.domain.ScrapedMedia(
                     title = streamExtractor.name ?: "بدون عنوان",
                     mediaUrl = url,
@@ -1341,10 +1526,10 @@ class DownloadRepository {
                 request.addOption("--no-check-certificates")
                 request.addOption("--geo-bypass")
                 val info = YoutubeDL.getInstance().getInfo(request)
-                
+
                 val ext = info.ext?.lowercase() ?: ""
                 val isVideoInfo = ext != "jpg" && ext != "jpeg" && ext != "png" && ext != "webp" && ext != "gif"
-                
+
                 return@withContext com.example.domain.ScrapedMedia(
                     title = info.title ?: "بدون عنوان",
                     mediaUrl = url,
@@ -1384,10 +1569,10 @@ class DownloadRepository {
             val request = YoutubeDLRequest(url)
             request.addOption("--no-check-certificates")
             val info = YoutubeDL.getInstance().getInfo(request)
-            
+
             val ext = info.ext?.lowercase() ?: ""
             val isVideoInfo = ext != "jpg" && ext != "jpeg" && ext != "png" && ext != "webp" && ext != "gif"
-            
+
             return@withContext com.example.domain.ScrapedMedia(
                 title = info.title ?: "بدون عنوان",
                 mediaUrl = url,
@@ -1398,7 +1583,7 @@ class DownloadRepository {
             )
         } catch (e: Exception) {
             Log.e("DownloadRepository", "Failed to fetch media info for url: $url", e)
-            
+
             // If both the structured page resolver and the existing extractor fail,
             // do not guess from a URL shape or save a cover image under a video extension.
             if (isInstagramUrl) {
@@ -1449,11 +1634,11 @@ class DownloadRepository {
                 .url(url)
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36")
                 .build()
-                
+
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return null
                 val html = response.body?.string() ?: return null
-                
+
                 var title = findMetaTag(html, "og:title") ?: findMetaTag(html, "twitter:title")
                 if (title == null || title.isEmpty()) {
                     val m = Pattern.compile("<title>([^<]+)</title>", Pattern.CASE_INSENSITIVE).matcher(html)
@@ -1462,20 +1647,20 @@ class DownloadRepository {
                     }
                 }
                 title = title?.let { decodeHtmlEntities(it) } ?: "وسائط مشتركة"
-                
+
                 var imageUrl = findMetaTag(html, "og:image") ?: findMetaTag(html, "twitter:image") ?: findMetaTag(html, "og:image:secure_url")
                 imageUrl = imageUrl?.let { decodeHtmlEntities(it) } ?: ""
-                
+
                 var videoUrl = findMetaTag(html, "og:video") ?: findMetaTag(html, "og:video:url") ?: findMetaTag(html, "og:video:secure_url") ?: findMetaTag(html, "twitter:player")
                 videoUrl = videoUrl?.let { decodeHtmlEntities(it) } ?: ""
-                
+
                 if (imageUrl.isEmpty() && videoUrl.isEmpty()) {
                     return null
                 }
-                
+
                 val isVideo = videoUrl.isNotEmpty()
                 val mediaUrlToUse = if (isVideo) videoUrl else imageUrl
-                
+
                 return com.example.domain.ScrapedMedia(
                     title = title,
                     mediaUrl = mediaUrlToUse,
