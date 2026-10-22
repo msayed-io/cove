@@ -102,8 +102,12 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     private val _searchSuggestionsActive = MutableStateFlow(false)
     val searchSuggestionsActive: StateFlow<Boolean> = _searchSuggestionsActive.asStateFlow()
 
+    private val _suggestionsLoading = MutableStateFlow(false)
+    val suggestionsLoading: StateFlow<Boolean> = _suggestionsLoading.asStateFlow()
+
     private var searchJob: Job? = null
     private var suggestionsJob: Job? = null
+    private var suggestionsRequestId = 0L
 
     /**
      * Background warm-up for the first search result.
@@ -121,26 +125,34 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
 
     fun onQueryChange(newQuery: String, fetchAutocomplete: Boolean = true) {
         _query.value = newQuery
-        
-        if (newQuery.isBlank()) {
-            _suggestions.value = emptyList()
+        val requestId = ++suggestionsRequestId
+        suggestionsJob?.cancel()
+        _suggestions.value = emptyList()
+        _suggestionsLoading.value = false
+
+        if (newQuery.isBlank() || !fetchAutocomplete) {
             _searchSuggestionsActive.value = false
             return
         }
 
         if (ContentFilter.containsBlockedContent(newQuery)) {
-            _suggestions.value = emptyList()
             _searchSuggestionsActive.value = false
             return
         }
 
-        if (fetchAutocomplete) {
-            _searchSuggestionsActive.value = true
-            suggestionsJob?.cancel()
-            suggestionsJob = viewModelScope.launch {
-                delay(200) // Fast debounce for suggestions
+        _searchSuggestionsActive.value = true
+        _suggestionsLoading.value = true
+        suggestionsJob = viewModelScope.launch {
+            delay(200) // Keep typing responsive while avoiding a request per keystroke.
+            try {
                 val result = getSuggestionsUseCase(newQuery)
-                _suggestions.value = result.filter { !ContentFilter.containsBlockedContent(it) }
+                if (requestId == suggestionsRequestId) {
+                    _suggestions.value = result.filter { !ContentFilter.containsBlockedContent(it) }
+                }
+            } finally {
+                if (requestId == suggestionsRequestId) {
+                    _suggestionsLoading.value = false
+                }
             }
         }
     }
@@ -149,9 +161,12 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         _isSearching.value = searching
         if (!searching) {
             // Reset to default home state
+            suggestionsRequestId++
+            suggestionsJob?.cancel()
             _query.value = ""
             _state.value = SearchUiState.Idle
             _suggestions.value = emptyList()
+            _suggestionsLoading.value = false
             _searchSuggestionsActive.value = false
         }
     }
@@ -159,6 +174,9 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     fun performSearch(searchQuery: String) {
         _query.value = searchQuery
         _isSearching.value = true
+        suggestionsRequestId++
+        suggestionsJob?.cancel()
+        _suggestionsLoading.value = false
         _searchSuggestionsActive.value = false
         _suggestions.value = emptyList()
         

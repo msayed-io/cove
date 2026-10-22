@@ -133,17 +133,16 @@ class DownloadRepository {
                                 val isVideo = subFolderName == "Cove Video"
                                 val isAudio = subFolderName == "Cove Audio"
                                 
-                                var cleanTitle = name
-                                if (name.startsWith("Media_")) {
+                                val cleanTitle = if (name.startsWith("Media_")) {
                                     val parts = name.split("_")
                                     if (parts.size >= 3) {
-                                        val titleWithExt = parts.drop(2).joinToString("_")
-                                        cleanTitle = titleWithExt.substringBeforeLast(".")
+                                        parts.drop(2).joinToString("_").substringBeforeLast(".")
+                                    } else {
+                                        name.substringBeforeLast(".")
                                     }
-                                }
-                                if (cleanTitle.isEmpty()) {
-                                    cleanTitle = name.substringBeforeLast(".")
-                                }
+                                } else {
+                                    name.substringBeforeLast(".")
+                                }.ifBlank { name.substringBeforeLast(".") }
                                 
                                 val companionThumb = File(file.parentFile, file.name.substringBeforeLast(".") + ".thumb.jpg")
                                 val thumbPath = if (companionThumb.exists()) companionThumb.absolutePath else (if (!isVideo && !isAudio) file.absolutePath else null)
@@ -531,16 +530,18 @@ class DownloadRepository {
             File(preferredPath)
         } else {
             val extension = if (isAudioOnly) "mp3" else (if (isVideo) "mp4" else "jpg")
-            val sanitizedTitle = title.take(30).replace(Regex("[^\\w\\s\\u0600-\\u06FF]"), "").trim()
-            val fileName = "Media_${System.currentTimeMillis()}_$sanitizedTitle.$extension"
-
             val coveDir = getCoveBaseDir(context)
             val subDirName = if (isAudioOnly) "Cove Audio" else (if (isVideo) "Cove Video" else "Cove Image")
             val targetDir = File(coveDir, subDirName)
             if (!targetDir.exists()) {
                 targetDir.mkdirs()
             }
-            File(targetDir, fileName)
+            if (isAudioOnly) {
+                nextAudioOutputFile(targetDir, title)
+            } else {
+                val sanitizedTitle = title.take(30).replace(Regex("[^\\w\\s\\u0600-\\u06FF]"), "").trim()
+                File(targetDir, "Media_${System.currentTimeMillis()}_$sanitizedTitle.$extension")
+            }
         }
 
         return DownloadItem(
@@ -631,11 +632,13 @@ class DownloadRepository {
         updateItem(downloadId) { it.copy(statusText = "جاري التحضير...") }
 
         try {
-            // Resolve direct download URL first for maximum reliability and 100% video+audio merging bypass
+            // YouTube audio must go through yt-dlp/FFmpeg so it is truly converted to MP3
+            // and receives its ID3 metadata and embedded cover; a raw CDN stream is not an MP3.
+            val youtubeAudio = isAudioOnly && isYouTubeUrl(url)
             var targetUrl = url
-            var isResolvedDirect = isDirectFileUrl(url)
+            var isResolvedDirect = isDirectFileUrl(url) && !youtubeAudio
 
-            if (!isResolvedDirect) {
+            if (!isResolvedDirect && !youtubeAudio) {
                 val resolved = resolveDirectUrl(context, url, isVideo, isAudioOnly)
                 if (resolved != null) {
                     targetUrl = resolved
@@ -666,8 +669,9 @@ class DownloadRepository {
                 )
             }
 
-            // Save companion thumbnail if provided (crucial for local album art and gallery covers)
-            if (!thumbnailUrl.isNullOrEmpty() && outputFile.exists()) {
+            // YouTube audio artwork is embedded in the MP3; do not create a second image file.
+            // Other media retain the companion thumbnail used by the existing gallery.
+            if (!youtubeAudio && !thumbnailUrl.isNullOrEmpty() && outputFile.exists()) {
                 try {
                     val companionThumb = File(outputFile.parentFile, outputFile.name.substringBeforeLast(".") + ".thumb.jpg")
                     if (!companionThumb.exists()) {
@@ -691,7 +695,9 @@ class DownloadRepository {
             }
 
             // Complete
-            val finalThumb = if (!thumbnailUrl.isNullOrEmpty()) {
+            val finalThumb = if (youtubeAudio) {
+                null
+            } else if (!thumbnailUrl.isNullOrEmpty()) {
                 val companionThumb = File(outputFile.parentFile, outputFile.name.substringBeforeLast(".") + ".thumb.jpg")
                 if (companionThumb.exists()) companionThumb.absolutePath else thumbnailUrl
             } else if (!isVideo && !isAudioOnly) {
@@ -919,6 +925,7 @@ class DownloadRepository {
             request.addOption("--audio-format", "mp3")
             request.addOption("--audio-quality", "0")
             request.addOption("--embed-thumbnail")
+            request.addOption("--convert-thumbnails", "jpg")
             request.addOption("--add-metadata")
         } else if (isVideo) {
             // Critical: download highest quality MP4 format containing BOTH audio and video, or merge via best format
@@ -1007,6 +1014,9 @@ class DownloadRepository {
                     }
                 }
             } catch (ytdlErr: Exception) {
+                if (isAudioOnly && isYouTubeUrl(originalUrl)) {
+                    throw DownloadException(true, ytdlErr.message ?: "تعذر تحويل صوت يوتيوب إلى ملف صوتي")
+                }
                 Log.w("DownloadRepository", "YoutubeDL execute failed: ${ytdlErr.message}. Attempting fallback direct stream download...")
 
                 val emergencyUrl = resolveDirectUrl(context, originalUrl, isVideo, isAudioOnly)
@@ -1035,6 +1045,28 @@ class DownloadRepository {
                 telemetryCollector.join()
             }
         }
+
+        if (isAudioOnly && isYouTubeUrl(originalUrl) && !hasEmbeddedArtwork(outputFile)) {
+            throw DownloadException(false, "اكتمل التحويل لكن تعذر تضمين غلاف المقطع داخل الملف")
+        }
+    }
+
+    private fun hasEmbeddedArtwork(file: File): Boolean {
+        val retriever = android.media.MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(file.absolutePath)
+            !retriever.embeddedPicture.isNullOrEmpty()
+        } catch (e: Exception) {
+            Log.w("DownloadRepository", "Could not verify embedded audio artwork", e)
+            false
+        } finally {
+            runCatching { retriever.release() }
+        }
+    }
+
+    private fun isYouTubeUrl(url: String): Boolean {
+        val lower = url.lowercase()
+        return lower.contains("youtube.com") || lower.contains("youtu.be")
     }
 
     /** Current on-disk size of an in-flight yt-dlp download (handles .part temp files). */

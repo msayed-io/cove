@@ -42,7 +42,7 @@ class SearchRepository {
 
         try {
             val encodedQuery = java.net.URLEncoder.encode(trimmed, "UTF-8")
-            val url = "https://suggestqueries.google.com/complete/search?client=firefox&q=$encodedQuery"
+            val url = "https://suggestqueries.google.com/complete/search?client=firefox&ds=yt&q=$encodedQuery"
             val request = Request.Builder()
                 .url(url)
                 .header("User-Agent", "Mozilla/5.0")

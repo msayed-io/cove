@@ -108,12 +108,16 @@ enum class QuickMode { UHD, MP3 }
 @Composable
 fun CobaltHome(
     viewModel: DownloadViewModel,
+    searchViewModel: SearchViewModel,
     hasPermission: Boolean,
     onRequestPermission: () -> Unit,
     onShowStarted: (Boolean) -> Unit,
     onSearchQuery: (String) -> Unit,
 ) {
     val scrapingState by viewModel.scrapingState.collectAsState()
+    val searchSuggestions by searchViewModel.suggestions.collectAsState()
+    val suggestionsActive by searchViewModel.searchSuggestionsActive.collectAsState()
+    val suggestionsLoading by searchViewModel.suggestionsLoading.collectAsState()
     var quickMode by remember { mutableStateOf(QuickMode.UHD) }
     var pasteToast by remember { mutableStateOf(false) }
     var emptyToast by remember { mutableStateOf(false) }
@@ -170,7 +174,23 @@ fun CobaltHome(
                 // 3) شريط البحث بتصميم الكبسولة الزجاجية
                 CobaltSearchBar(
                     value = viewModel.inputUrl,
-                    onValueChange = { viewModel.setUrl(it) },
+                    suggestions = searchSuggestions,
+                    suggestionsActive = suggestionsActive,
+                    suggestionsLoading = suggestionsLoading,
+                    onValueChange = {
+                        viewModel.setUrl(it)
+                        val trimmed = it.trim()
+                        if (trimmed.isNotEmpty() && android.util.Patterns.WEB_URL.matcher(trimmed).matches()) {
+                            searchViewModel.onQueryChange("", fetchAutocomplete = false)
+                        } else {
+                            searchViewModel.onQueryChange(it)
+                        }
+                    },
+                    onSuggestionClick = { suggestion ->
+                        viewModel.setUrl(suggestion)
+                        focusManager.clearFocus()
+                        onSearchQuery(suggestion)
+                    },
                     onSearch = {
                         val q = viewModel.inputUrl.trim()
                         when {
@@ -311,7 +331,11 @@ private fun CobaltHero() {
 @Composable
 private fun CobaltSearchBar(
     value: String,
+    suggestions: List<String>,
+    suggestionsActive: Boolean,
+    suggestionsLoading: Boolean,
     onValueChange: (String) -> Unit,
+    onSuggestionClick: (String) -> Unit,
     onSearch: () -> Unit,
     onPaste: () -> Unit,
     pasteToast: Boolean,
@@ -392,6 +416,14 @@ private fun CobaltSearchBar(
                 )
             }
         }
+        if (suggestionsActive) {
+            SearchSuggestionsPanel(
+                suggestions = suggestions,
+                loading = suggestionsLoading,
+                onSelect = onSuggestionClick
+            )
+        }
+
         // التوست
         Box(modifier = Modifier.fillMaxWidth().height(22.dp), contentAlignment = Alignment.TopCenter) {
             androidx.compose.animation.AnimatedVisibility(visible = pasteToast, enter = fadeIn(tween(300)), exit = fadeOut(tween(300))) {

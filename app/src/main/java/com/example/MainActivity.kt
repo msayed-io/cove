@@ -509,16 +509,27 @@ fun MainScreen(viewModel: DownloadViewModel, searchViewModel: SearchViewModel, m
                                 Column(
                                     modifier = Modifier
                                         .fillMaxSize()
-                                        .padding(top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 60.dp)
+                                        .padding(top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 52.dp)
                                 ) {
                                     val suggestionsActive by searchViewModel.searchSuggestionsActive.collectAsState()
                                     val suggestionList by searchViewModel.suggestions.collectAsState()
+                                    val suggestionsLoading by searchViewModel.suggestionsLoading.collectAsState()
                                     val searchState by searchViewModel.state.collectAsState()
 
-                                    if (suggestionsActive && suggestionList.isNotEmpty()) {
-                                        // ...
+                                    if (suggestionsActive) {
+                                        SearchSuggestionsPanel(
+                                            suggestions = suggestionList,
+                                            loading = suggestionsLoading,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 16.dp),
+                                            onSelect = { suggestion ->
+                                                searchViewModel.performSearch(suggestion)
+                                                focusManager.clearFocus()
+                                            }
+                                        )
                                     } else if (searchState is SearchUiState.Idle && searchQuery.isEmpty()) {
-                                        // ...
+                                        // Keep the current empty state while the search field is untouched.
                                     } else {
                                         SearchScreen(viewModel = viewModel, searchViewModel = searchViewModel)
                                     }
@@ -527,6 +538,7 @@ fun MainScreen(viewModel: DownloadViewModel, searchViewModel: SearchViewModel, m
                         } else {
                             CobaltHome(
                                 viewModel = viewModel,
+                                searchViewModel = searchViewModel,
                                 hasPermission = hasPermissionState,
                                 onRequestPermission = requestStoragePermission,
                                 onShowStarted = { showDownloadStartedDialog = it },
