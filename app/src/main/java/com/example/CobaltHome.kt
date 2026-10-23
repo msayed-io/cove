@@ -73,6 +73,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -124,6 +125,7 @@ fun CobaltHome(
     var showTerms by remember { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
     val clipboard = LocalClipboardManager.current
 
     // توست اللصق يختفي بعد ثانيتين (مطابق لسلوك HTML).
@@ -188,15 +190,23 @@ fun CobaltHome(
                     },
                     onSuggestionClick = { suggestion ->
                         viewModel.setUrl(suggestion)
-                        focusManager.clearFocus()
+                        focusManager.clearFocus(force = true)
+                        keyboardController?.hide()
                         onSearchQuery(suggestion)
                     },
                     onSearch = {
                         val q = viewModel.inputUrl.trim()
                         when {
                             q.isBlank() -> { emptyToast = true; runCatching { focusRequester.requestFocus() } }
-                            android.util.Patterns.WEB_URL.matcher(q).matches() -> viewModel.fetchMedia()
-                            else -> onSearchQuery(q)
+                            else -> {
+                                focusManager.clearFocus(force = true)
+                                keyboardController?.hide()
+                                if (android.util.Patterns.WEB_URL.matcher(q).matches()) {
+                                    viewModel.fetchMedia()
+                                } else {
+                                    onSearchQuery(q)
+                                }
+                            }
                         }
                     },
                     onPaste = {
@@ -342,18 +352,23 @@ private fun CobaltSearchBar(
     emptyToast: Boolean,
     focusRequester: FocusRequester,
 ) {
-    Column(modifier = Modifier.fillMaxWidth()) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .glassSurface(
+                fillColor = CG.SearchBar,
+                tintAlpha = 0.52f,
+                radius = 24.dp,
+                capsule = !suggestionsActive,
+                borderColor = CG.Border10,
+                borderWidth = 0.8.dp,
+                rimWidth = GlassMath.EDGE_RIM_WIDTH_DP.dp
+            )
+            .clip(if (suggestionsActive) RoundedCornerShape(24.dp) else CircleShape)
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .glassSurface(
-                    fillColor = CG.SearchBar,
-                    tintAlpha = 0.52f,
-                    capsule = true,
-                    borderColor = Color.White.copy(alpha = 0.14f),
-                    borderWidth = 0.8.dp,
-                    rimWidth = GlassMath.EDGE_RIM_WIDTH_DP.dp
-                )
                 .padding(6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -417,6 +432,13 @@ private fun CobaltSearchBar(
             }
         }
         if (suggestionsActive) {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp)
+                    .height(0.5.dp)
+                    .background(CG.Border10)
+            )
             SearchSuggestionsPanel(
                 suggestions = suggestions,
                 loading = suggestionsLoading,

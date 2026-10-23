@@ -1,7 +1,6 @@
 package com.example
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,7 +13,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.CircularProgressIndicator
@@ -24,7 +22,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -32,7 +29,7 @@ import androidx.compose.ui.unit.sp
 import com.example.ui.theme.CG
 import com.example.ui.theme.CoveArabic
 
-/** Suggestions dropdown shared by home and search, sized to sit directly under its search field. */
+/** Content only: callers place it inside the search field's shared Cove surface. */
 @Composable
 internal fun SearchSuggestionsPanel(
     suggestions: List<String>,
@@ -41,25 +38,14 @@ internal fun SearchSuggestionsPanel(
     onSelect: (String) -> Unit
 ) {
     val visibleSuggestions = suggestions.take(5)
-    val panelHeight = when {
-        loading -> 68.dp
-        visibleSuggestions.isEmpty() -> 68.dp
-        else -> (visibleSuggestions.size * 50 + 4).coerceAtMost(254).dp
-    }
-    val shape = RoundedCornerShape(
-        topStart = 0.dp,
-        topEnd = 0.dp,
-        bottomStart = 18.dp,
-        bottomEnd = 18.dp
-    )
+    // Match the reference's fixed dropdown height; only the row count varies within it.
+    val panelHeight = 240.dp
 
     Column(
         modifier = modifier
             .fillMaxWidth()
             .height(panelHeight)
-            .clip(shape)
             .background(CG.Card)
-            .border(1.dp, CG.Border10, shape)
     ) {
         when {
             loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -85,9 +71,9 @@ internal fun SearchSuggestionsPanel(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(50.dp)
+                            .height(47.dp)
                             .clickable { onSelect(suggestion) }
-                            .padding(horizontal = 14.dp),
+                            .padding(horizontal = 16.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
@@ -95,13 +81,13 @@ internal fun SearchSuggestionsPanel(
                             contentDescription = null,
                             tint = CG.CobaltGlow,
                             modifier = Modifier
-                                .padding(end = 11.dp)
-                                .size(17.dp)
+                                .padding(end = 12.dp)
+                                .size(18.dp)
                         )
                         Text(
                             text = suggestion,
                             color = CG.TextPrimary,
-                            fontSize = 14.sp,
+                            fontSize = 15.sp,
                             fontWeight = FontWeight.Medium,
                             fontFamily = CoveArabic,
                             maxLines = 1,
@@ -110,7 +96,7 @@ internal fun SearchSuggestionsPanel(
                     }
                     if (index < visibleSuggestions.lastIndex) {
                         HorizontalDivider(
-                            modifier = Modifier.padding(horizontal = 14.dp),
+                            modifier = Modifier.padding(horizontal = 16.dp),
                             color = CG.Divider05,
                             thickness = 0.5.dp
                         )

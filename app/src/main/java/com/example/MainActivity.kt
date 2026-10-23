@@ -53,6 +53,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -402,14 +403,18 @@ fun MainScreen(viewModel: DownloadViewModel, searchViewModel: SearchViewModel, m
                                                                         if (isSearching) {
                             Box(modifier = Modifier.fillMaxSize()) {
                                 val focusManager = LocalFocusManager.current
-                                // 1. Top Search Header with floating liquid glass capsules (Floating)
+                                val keyboardController = LocalSoftwareKeyboardController.current
+                                val suggestionsActive by searchViewModel.searchSuggestionsActive.collectAsState()
+                                val suggestionList by searchViewModel.suggestions.collectAsState()
+                                val suggestionsLoading by searchViewModel.suggestionsLoading.collectAsState()
+                                // 1. Search capsule and dropdown share one width and one Cove surface.
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .zIndex(1f) // Ensure header is on top
                                         .padding(top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 10.dp)
                                         .padding(horizontal = 16.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
+                                    verticalAlignment = Alignment.Top,
                                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                                 ) {
                                     // Floating Exit Capsule Button
@@ -417,11 +422,11 @@ fun MainScreen(viewModel: DownloadViewModel, searchViewModel: SearchViewModel, m
                                         modifier = Modifier
                                             .size(42.dp)
                                             .liquidGlass(
-                                                fillColor = Color(0xFF000000),
+                                                fillColor = CG.SearchBar,
                                                 washAlpha = 0.68f,
                                                 capsule = true,
                                                 radius = 21.dp,
-                                                borderColor = Color.White.copy(alpha = 0.18f),
+                                                borderColor = CG.Border10,
                                                 borderWidth = 0.8.dp,
                                                 rimLightAlpha = 0.50f,
                                                 pressFeedback = true
@@ -437,70 +442,105 @@ fun MainScreen(viewModel: DownloadViewModel, searchViewModel: SearchViewModel, m
                                         )
                                     }
 
-                                    // Pill-shaped search box floating liquid glass capsule
-                                    Row(
+                                    // The input and suggestions live in this same weighted column:
+                                    // its width is exactly the input width, never the exit-button width.
+                                    Column(
                                         modifier = Modifier
                                             .weight(1f)
-                                            .height(42.dp)
                                             .liquidGlass(
-                                                fillColor = Color(0xFF000000),
+                                                fillColor = CG.SearchBar,
                                                 washAlpha = 0.68f,
-                                                capsule = true,
                                                 radius = 21.dp,
-                                                borderColor = Color.White.copy(alpha = 0.18f),
+                                                capsule = false,
+                                                borderColor = CG.Border10,
                                                 borderWidth = 0.8.dp,
                                                 rimLightAlpha = 0.50f,
                                                 pressFeedback = false
                                             )
-                                            .padding(horizontal = 16.dp),
-                                        verticalAlignment = Alignment.CenterVertically
+                                            .clip(RoundedCornerShape(21.dp))
                                     ) {
-                                        Icon(
-                                            imageVector = Icons.Rounded.Search,
-                                            contentDescription = null,
-                                            tint = OmniGetDesignTokens.TextSecondary,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-
-                                        Spacer(modifier = Modifier.width(10.dp))
-
-                                        val focusRequester = remember { FocusRequester() }
-                                        LaunchedEffect(Unit) { focusRequester.requestFocus() }
-
-                                        BasicTextField(
-                                            value = searchQuery,
-                                            onValueChange = { searchViewModel.onQueryChange(it) },
+                                        Row(
                                             modifier = Modifier
-                                                .weight(1f)
-                                                .focusRequester(focusRequester),
-                                            textStyle = TextStyle(color = OmniGetDesignTokens.TextPrimary, fontSize = 14.sp),
-                                            cursorBrush = SolidColor(OmniGetDesignTokens.Accent),
-                                            singleLine = true,
-                                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                                            keyboardActions = KeyboardActions(onSearch = {
-                                                if (searchQuery.isNotBlank()) {
-                                                    searchViewModel.performSearch(searchQuery)
-                                                    focusManager.clearFocus()
+                                                .fillMaxWidth()
+                                                .height(42.dp)
+                                                .padding(horizontal = 16.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.Search,
+                                                contentDescription = null,
+                                                tint = CG.CobaltGlow,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(10.dp))
+
+                                            val focusRequester = remember { FocusRequester() }
+                                            LaunchedEffect(Unit) {
+                                                if (searchQuery.isBlank()) {
+                                                    focusRequester.requestFocus()
+                                                } else {
+                                                    focusManager.clearFocus(force = true)
+                                                    keyboardController?.hide()
                                                 }
-                                            }),
-                                            decorationBox = { innerTextField ->
-                                                if (searchQuery.isEmpty()) {
-                                                    Text(
-                                                        text = "بحث أو أدخل عنوان...",
-                                                        color = OmniGetDesignTokens.TextMuted,
-                                                        fontSize = 14.sp
-                                                    )
+                                            }
+
+                                            BasicTextField(
+                                                value = searchQuery,
+                                                onValueChange = { searchViewModel.onQueryChange(it) },
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .focusRequester(focusRequester),
+                                                textStyle = TextStyle(
+                                                    color = CG.TextPrimary,
+                                                    fontSize = 14.sp,
+                                                    fontFamily = CoveArabic
+                                                ),
+                                                cursorBrush = SolidColor(CG.CobaltGlow),
+                                                singleLine = true,
+                                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                                                keyboardActions = KeyboardActions(onSearch = {
+                                                    if (searchQuery.isNotBlank()) {
+                                                        searchViewModel.performSearch(searchQuery)
+                                                        focusManager.clearFocus(force = true)
+                                                        keyboardController?.hide()
+                                                    }
+                                                }),
+                                                decorationBox = { innerTextField ->
+                                                    if (searchQuery.isEmpty()) {
+                                                        Text(
+                                                            text = "بحث أو أدخل عنوان...",
+                                                            color = CG.TextMuted,
+                                                            fontSize = 14.sp,
+                                                            fontFamily = CoveArabic
+                                                        )
+                                                    }
+                                                    innerTextField()
                                                 }
-                                                innerTextField()
+                                            )
+                                            if (searchQuery.isNotEmpty()) {
+                                                IconButton(
+                                                    onClick = { searchViewModel.onQueryChange("", fetchAutocomplete = false) },
+                                                    modifier = Modifier.size(24.dp)
+                                                ) {
+                                                    Icon(Icons.Rounded.Close, "Clear", tint = CG.TextPrimary, modifier = Modifier.size(16.dp))
+                                                }
                                             }
-                                        )
-                                        if (searchQuery.isNotEmpty()) {
-                                            IconButton(
-                                                onClick = { searchViewModel.onQueryChange("", fetchAutocomplete = false) },
-                                                modifier = Modifier.size(24.dp)
-                                            ) {
-                                                Icon(Icons.Rounded.Close, "Clear", tint = Color.White, modifier = Modifier.size(16.dp))
-                                            }
+                                        }
+                                        if (suggestionsActive) {
+                                            HorizontalDivider(
+                                                modifier = Modifier.padding(horizontal = 14.dp),
+                                                color = CG.Border10,
+                                                thickness = 0.5.dp
+                                            )
+                                            SearchSuggestionsPanel(
+                                                suggestions = suggestionList,
+                                                loading = suggestionsLoading,
+                                                onSelect = { suggestion ->
+                                                    searchViewModel.performSearch(suggestion)
+                                                    focusManager.clearFocus(force = true)
+                                                    keyboardController?.hide()
+                                                }
+                                            )
                                         }
                                     }
                                 }
@@ -511,30 +551,10 @@ fun MainScreen(viewModel: DownloadViewModel, searchViewModel: SearchViewModel, m
                                         .fillMaxSize()
                                         .padding(top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 52.dp)
                                 ) {
-                                    val suggestionsActive by searchViewModel.searchSuggestionsActive.collectAsState()
-                                    val suggestionList by searchViewModel.suggestions.collectAsState()
-                                    val suggestionsLoading by searchViewModel.suggestionsLoading.collectAsState()
                                     val searchState by searchViewModel.state.collectAsState()
 
                                     if (suggestionsActive) {
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(horizontal = 16.dp),
-                                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                        ) {
-                                            // Align under the input capsule, after the 42 dp exit button and its gap.
-                                            Spacer(Modifier.width(52.dp))
-                                            SearchSuggestionsPanel(
-                                                suggestions = suggestionList,
-                                                loading = suggestionsLoading,
-                                                modifier = Modifier.weight(1f),
-                                                onSelect = { suggestion ->
-                                                    searchViewModel.performSearch(suggestion)
-                                                    focusManager.clearFocus()
-                                                }
-                                            )
-                                        }
+                                        // Suggestions are displayed inside the matching-width header surface above.
                                     } else if (searchState is SearchUiState.Idle && searchQuery.isEmpty()) {
                                         // Keep the current empty state while the search field is untouched.
                                     } else {
