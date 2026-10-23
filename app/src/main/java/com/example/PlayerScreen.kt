@@ -5,8 +5,12 @@ import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
 import android.net.Uri
+import android.view.LayoutInflater
+import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.*
 import androidx.compose.animation.fadeIn
@@ -42,7 +46,6 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import com.example.domain.StreamInfo
@@ -183,6 +186,29 @@ fun FullPlayerScreen(
     val activity = remember(context) { context.findActivity() }
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
+    LaunchedEffect(activity, isLandscape) {
+        activity?.window?.let { window ->
+            val bars = WindowInsetsControllerCompat(window, window.decorView)
+            if (isLandscape) {
+                bars.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                bars.hide(WindowInsetsCompat.Type.systemBars())
+            } else {
+                bars.show(WindowInsetsCompat.Type.systemBars())
+            }
+        }
+    }
+
+    DisposableEffect(activity) {
+        onDispose {
+            if (activity?.isChangingConfigurations != true) {
+                activity?.window?.let { window ->
+                    WindowInsetsControllerCompat(window, window.decorView)
+                        .show(WindowInsetsCompat.Type.systemBars())
+                }
+            }
+        }
+    }
+
     val currentQueueItem = remember(queue, currentIndex) {
         queue.getOrNull(currentIndex)
     }
@@ -206,6 +232,10 @@ fun FullPlayerScreen(
     var showDownloadSheet by remember { mutableStateOf(false) }
 
     val closePlayer = {
+        activity?.window?.let { window ->
+            WindowInsetsControllerCompat(window, window.decorView)
+                .show(WindowInsetsCompat.Type.systemBars())
+        }
         activity?.let(viewModel::restoreVideoOrientation)
         onClose()
     }
@@ -239,7 +269,10 @@ fun FullPlayerScreen(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .aspectRatio(16f / 9f)
+                    .then(
+                        if (isLandscape) Modifier.fillMaxSize()
+                        else Modifier.aspectRatio(16f / 9f)
+                    )
                     .background(Color.Black)
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
@@ -249,10 +282,12 @@ fun FullPlayerScreen(
                 if (isVideo && player != null) {
                     AndroidView(
                         factory = { ctx ->
-                            PlayerView(ctx).apply {
+                            (LayoutInflater.from(ctx).inflate(
+                                R.layout.cove_player_video_view,
+                                FrameLayout(ctx),
+                                false
+                            ) as PlayerView).apply {
                                 this.player = player
-                                useController = false
-                                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                             }
                         },
                         update = { it.player = player },
@@ -323,25 +358,27 @@ fun FullPlayerScreen(
                                 )
                         )
 
-                        // Exit on the physical left, rotate on the physical right — gallery parity.
-                        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                GalleryRoundButton(
-                                    icon = Icons.AutoMirrored.Rounded.ArrowBack,
-                                    description = "إغلاق المشغل",
-                                    onClick = closePlayer
-                                )
-                                GalleryRoundButton(
-                                    icon = Icons.Rounded.ScreenRotation,
-                                    description = if (isLandscape) "التبديل إلى الوضع الطولي" else "التبديل إلى الوضع العرضي",
-                                    onClick = { activity?.let { viewModel.toggleVideoOrientation(it, isLandscape) } }
-                                )
+                        // Playback controls auto-hide; landscape exit/rotation controls stay persistent.
+                        if (!isLandscape) {
+                            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    GalleryRoundButton(
+                                        icon = Icons.AutoMirrored.Rounded.ArrowBack,
+                                        description = "إغلاق المشغل",
+                                        onClick = closePlayer
+                                    )
+                                    GalleryRoundButton(
+                                        icon = Icons.Rounded.ScreenRotation,
+                                        description = "التبديل إلى الوضع العرضي",
+                                        onClick = { activity?.let { viewModel.toggleVideoOrientation(it, false) } }
+                                    )
+                                }
                             }
                         }
 
@@ -379,6 +416,41 @@ fun FullPlayerScreen(
                     }
                 }
 
+                if (isLandscape) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(76.dp)
+                            .align(Alignment.TopCenter)
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(Color.Black.copy(alpha = 0.68f), Color.Transparent)
+                                )
+                            )
+                    )
+                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .align(Alignment.TopCenter)
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            GalleryRoundButton(
+                                icon = Icons.AutoMirrored.Rounded.ArrowBack,
+                                description = "إغلاق المشغل",
+                                onClick = closePlayer
+                            )
+                            GalleryRoundButton(
+                                icon = Icons.Rounded.ScreenRotation,
+                                description = "العودة إلى الوضع الطولي",
+                                onClick = { activity?.let { viewModel.toggleVideoOrientation(it, true) } }
+                            )
+                        }
+                    }
+                }
+
                 if (isResolvingStream || isBuffering) {
                     Column(
                         modifier = Modifier
@@ -405,145 +477,147 @@ fun FullPlayerScreen(
                 }
             }
 
-            // ------------------------------------------------------------------
-            // 2) Scrollable details below the fixed player (title always visible,
-            //    plain text under the video — never inside a capsule).
-            // ------------------------------------------------------------------
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp)
-                    .padding(top = 14.dp, bottom = 28.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                Text(
-                    text = currentTitle,
-                    style = MaterialTheme.typography.titleMedium.copy(
-                        fontWeight = FontWeight.Bold,
-                        lineHeight = 22.sp
-                    ),
-                    color = Color.White,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis
-                )
-
-                val viewsText = currentQueueItem?.viewCountText.orEmpty().trim()
-                val metaText = when {
-                    isLocal -> "من ملفاتي المحملة"
-                    viewsText.isNotEmpty() -> "مشاهدة مباشرة • $viewsText مشاهدة"
-                    else -> "مشاهدة مباشرة"
-                }
-                Text(
-                    text = metaText,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color.White.copy(alpha = 0.55f)
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically
+            if (!isLandscape) {
+                // ------------------------------------------------------------------
+                // 2) Portrait details below the fixed player. In landscape, the video owns
+                //    the full available area so it keeps its proper aspect and controls.
+                // ------------------------------------------------------------------
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp)
+                        .padding(top = 14.dp, bottom = 28.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    Button(
-                        onClick = {
-                            if (isLocal) {
-                                Toast.makeText(context, "هذا الملف محمل بالفعل على جهازك!", Toast.LENGTH_SHORT).show()
-                            } else {
-                                showDownloadSheet = true
-                            }
-                        },
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(46.dp),
-                        shape = RoundedCornerShape(99.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = CG.Platinum,
-                            contentColor = CG.Void
+                    Text(
+                        text = currentTitle,
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            lineHeight = 22.sp
                         ),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
+                        color = Color.White,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis
+                    )
+
+                    val viewsText = currentQueueItem?.viewCountText.orEmpty().trim()
+                    val metaText = when {
+                        isLocal -> "من ملفاتي المحملة"
+                        viewsText.isNotEmpty() -> "مشاهدة مباشرة • $viewsText مشاهدة"
+                        else -> "مشاهدة مباشرة"
+                    }
+                    Text(
+                        text = metaText,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.55f)
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center
+                        Button(
+                            onClick = {
+                                if (isLocal) {
+                                    Toast.makeText(context, "هذا الملف محمل بالفعل على جهازك!", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    showDownloadSheet = true
+                                }
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(46.dp),
+                            shape = RoundedCornerShape(99.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = CG.Platinum,
+                                contentColor = CG.Void
+                            ),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Download,
-                                contentDescription = null,
-                                tint = CG.Void,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(Modifier.width(7.dp))
-                            Text(
-                                text = if (isLocal) "محمل بالفعل" else "تحميل الوسائط",
-                                color = CG.Void,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                                softWrap = false,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Download,
+                                    contentDescription = null,
+                                    tint = CG.Void,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(Modifier.width(7.dp))
+                                Text(
+                                    text = if (isLocal) "محمل بالفعل" else "تحميل الوسائط",
+                                    color = CG.Void,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         }
+
+                        GalleryRoundButton(
+                            icon = Icons.Rounded.Headphones,
+                            description = "الاستماع في الخلفية",
+                            onClick = {
+                                Toast.makeText(
+                                    context,
+                                    "تم تشغيل وضع الاستماع بالخلفية! يمكنك إغلاق التطبيق الآن.",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
+                        )
+
+                        GalleryRoundButton(
+                            icon = Icons.Rounded.Share,
+                            description = "مشاركة المقطع",
+                            onClick = {
+                                val source = currentQueueItem?.id.orEmpty()
+                                val shareUrl = if (source.startsWith("http", ignoreCase = true)) {
+                                    source
+                                } else {
+                                    "https://www.youtube.com/watch?v=$source"
+                                }
+                                val intent = Intent(Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(Intent.EXTRA_TEXT, shareUrl)
+                                }
+                                context.startActivity(Intent.createChooser(intent, "مشاركة الرابط"))
+                            }
+                        )
                     }
 
-                    GalleryRoundButton(
-                        icon = Icons.Rounded.Headphones,
-                        description = "الاستماع في الخلفية",
-                        onClick = {
-                            Toast.makeText(
-                                context,
-                                "تم تشغيل وضع الاستماع بالخلفية! يمكنك إغلاق التطبيق الآن.",
-                                Toast.LENGTH_LONG
-                            ).show()
-                        }
-                    )
+                    HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
 
-                    GalleryRoundButton(
-                        icon = Icons.Rounded.Share,
-                        description = "مشاركة المقطع",
-                        onClick = {
-                            val source = currentQueueItem?.id.orEmpty()
-                            val shareUrl = if (source.startsWith("http", ignoreCase = true)) {
-                                source
-                            } else {
-                                "https://www.youtube.com/watch?v=$source"
-                            }
-                            val intent = Intent(Intent.ACTION_SEND).apply {
-                                type = "text/plain"
-                                putExtra(Intent.EXTRA_TEXT, shareUrl)
-                            }
-                            context.startActivity(Intent.createChooser(intent, "مشاركة الرابط"))
-                        }
-                    )
-                }
-
-                HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
-
-                // "قائمة التشغيل التالية" — cards identical to the search-result cards.
-                Text(
-                    text = "قائمة التشغيل التالية",
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                    color = Color.White
-                )
-
-                val upNext = queue.mapIndexedNotNull { index, item ->
-                    if (index == currentIndex) null else index to item
-                }
-                if (upNext.isEmpty()) {
+                    // "قائمة التشغيل التالية" — cards identical to the search-result cards.
                     Text(
-                        text = "لا توجد مقاطع تالية في القائمة",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color.White.copy(alpha = 0.5f),
-                        modifier = Modifier.fillMaxWidth(),
-                        textAlign = TextAlign.Center
+                        text = "قائمة التشغيل التالية",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        color = Color.White
                     )
-                } else {
-                    upNext.forEach { (index, item) ->
-                        PlayerUpNextCard(
-                            item = item,
-                            onClick = { viewModel.playQueueItem(item, queue, index) }
+
+                    val upNext = queue.mapIndexedNotNull { index, item ->
+                        if (index == currentIndex) null else index to item
+                    }
+                    if (upNext.isEmpty()) {
+                        Text(
+                            text = "لا توجد مقاطع تالية في القائمة",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.White.copy(alpha = 0.5f),
+                            modifier = Modifier.fillMaxWidth(),
+                            textAlign = TextAlign.Center
                         )
+                    } else {
+                        upNext.forEach { (index, item) ->
+                            PlayerUpNextCard(
+                                item = item,
+                                onClick = { viewModel.playQueueItem(item, queue, index) }
+                            )
+                        }
                     }
                 }
             }

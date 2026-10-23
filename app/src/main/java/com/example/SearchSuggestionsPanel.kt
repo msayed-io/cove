@@ -1,6 +1,7 @@
 package com.example
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,6 +14,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.unit.Dp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.CircularProgressIndicator
@@ -29,14 +33,21 @@ import androidx.compose.ui.unit.sp
 import com.example.ui.theme.CG
 import com.example.ui.theme.CoveArabic
 
-/** Content only: callers place it inside the search field's shared Cove surface. */
+/** Opaque Cove suggestions card with rounded upper corners that meet the capsule search field. */
 @Composable
 internal fun SearchSuggestionsPanel(
     suggestions: List<String>,
     loading: Boolean,
     modifier: Modifier = Modifier,
+    topCornerRadius: Dp = 24.dp,
     onSelect: (String) -> Unit
 ) {
+    val shape = RoundedCornerShape(
+        topStart = topCornerRadius,
+        topEnd = topCornerRadius,
+        bottomStart = 22.dp,
+        bottomEnd = 22.dp
+    )
     val visibleSuggestions = suggestions.take(5)
     // Match the reference's fixed dropdown height; only the row count varies within it.
     val panelHeight = 240.dp
@@ -45,7 +56,9 @@ internal fun SearchSuggestionsPanel(
         modifier = modifier
             .fillMaxWidth()
             .height(panelHeight)
+            .clip(shape)
             .background(CG.Card)
+            .border(1.dp, CG.Border10, shape)
     ) {
         when {
             loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

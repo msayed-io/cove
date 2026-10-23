@@ -67,6 +67,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -124,6 +125,7 @@ fun CobaltHome(
     var emptyToast by remember { mutableStateOf(false) }
     var showTerms by remember { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
+    var searchFocused by remember { mutableStateOf(false) }
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val clipboard = LocalClipboardManager.current
@@ -179,6 +181,7 @@ fun CobaltHome(
                     suggestions = searchSuggestions,
                     suggestionsActive = suggestionsActive,
                     suggestionsLoading = suggestionsLoading,
+                    searchFocused = searchFocused,
                     onValueChange = {
                         viewModel.setUrl(it)
                         val trimmed = it.trim()
@@ -344,6 +347,7 @@ private fun CobaltSearchBar(
     suggestions: List<String>,
     suggestionsActive: Boolean,
     suggestionsLoading: Boolean,
+    searchFocused: Boolean,
     onValueChange: (String) -> Unit,
     onSuggestionClick: (String) -> Unit,
     onSearch: () -> Unit,
@@ -352,23 +356,20 @@ private fun CobaltSearchBar(
     emptyToast: Boolean,
     focusRequester: FocusRequester,
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .glassSurface(
-                fillColor = CG.SearchBar,
-                tintAlpha = 0.52f,
-                radius = 24.dp,
-                capsule = !suggestionsActive,
-                borderColor = CG.Border10,
-                borderWidth = 0.8.dp,
-                rimWidth = GlassMath.EDGE_RIM_WIDTH_DP.dp
-            )
-            .clip(if (suggestionsActive) RoundedCornerShape(24.dp) else CircleShape)
-    ) {
+    Column(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .glassSurface(
+                    fillColor = if (searchFocused) CG.Void else CG.SearchBar,
+                    tintAlpha = if (searchFocused) 1f else 0.52f,
+                    radius = 30.dp,
+                    capsule = true,
+                    borderColor = CG.Border10,
+                    borderWidth = 0.8.dp,
+                    rimWidth = GlassMath.EDGE_RIM_WIDTH_DP.dp
+                )
+                .clip(CircleShape)
                 .padding(6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -400,6 +401,7 @@ private fun CobaltSearchBar(
                 modifier = Modifier
                     .weight(1f)
                     .focusRequester(focusRequester)
+                    .onFocusChanged { searchFocused = it.isFocused }
                     .padding(horizontal = 12.dp, vertical = 8.dp),
                 decorationBox = { inner ->
                     Box(contentAlignment = Alignment.CenterStart) {
@@ -442,6 +444,7 @@ private fun CobaltSearchBar(
             SearchSuggestionsPanel(
                 suggestions = suggestions,
                 loading = suggestionsLoading,
+                topCornerRadius = 30.dp,
                 onSelect = onSuggestionClick
             )
         }
