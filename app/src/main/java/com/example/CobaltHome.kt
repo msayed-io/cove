@@ -182,6 +182,7 @@ fun CobaltHome(
                     suggestionsActive = suggestionsActive,
                     suggestionsLoading = suggestionsLoading,
                     searchFocused = searchFocused,
+                    onSearchFocusChanged = { searchFocused = it },
                     onValueChange = {
                         viewModel.setUrl(it)
                         val trimmed = it.trim()
@@ -348,6 +349,7 @@ private fun CobaltSearchBar(
     suggestionsActive: Boolean,
     suggestionsLoading: Boolean,
     searchFocused: Boolean,
+    onSearchFocusChanged: (Boolean) -> Unit,
     onValueChange: (String) -> Unit,
     onSuggestionClick: (String) -> Unit,
     onSearch: () -> Unit,
@@ -401,7 +403,7 @@ private fun CobaltSearchBar(
                 modifier = Modifier
                     .weight(1f)
                     .focusRequester(focusRequester)
-                    .onFocusChanged { searchFocused = it.isFocused }
+                    .onFocusChanged { onSearchFocusChanged(it.isFocused) }
                     .padding(horizontal = 12.dp, vertical = 8.dp),
                 decorationBox = { inner ->
                     Box(contentAlignment = Alignment.CenterStart) {
