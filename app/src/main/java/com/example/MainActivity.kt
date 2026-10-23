@@ -43,6 +43,7 @@ import androidx.compose.material.icons.outlined.*
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.zIndex
@@ -339,7 +340,7 @@ fun MainScreen(viewModel: DownloadViewModel, searchViewModel: SearchViewModel, m
     }
     val scrapingState by viewModel.scrapingState.collectAsState()
     val downloads by viewModel.downloads.collectAsState()
-    var currentTab by remember { mutableStateOf(ScreenTab.DOWNLOAD) }
+    var currentTab by rememberSaveable { mutableStateOf(ScreenTab.DOWNLOAD) }
     var showDownloadStartedDialog by remember { mutableStateOf(false) }
     val showFullPlayer by playerViewModel.showFullPlayer.collectAsState()
     val currentPlayerMediaItem by playerViewModel.currentMediaItem.collectAsState()
@@ -362,12 +363,6 @@ fun MainScreen(viewModel: DownloadViewModel, searchViewModel: SearchViewModel, m
         viewModel.requestedTab?.let {
             currentTab = it
             viewModel.requestedTab = null
-        }
-    }
-
-    LaunchedEffect(currentTab) {
-        if (currentTab != ScreenTab.DOWNLOAD) {
-            searchViewModel.setSearching(false)
         }
     }
 
@@ -400,7 +395,7 @@ fun MainScreen(viewModel: DownloadViewModel, searchViewModel: SearchViewModel, m
                 when (tab) {
                     ScreenTab.DOWNLOAD -> {
                         val isSearching by searchViewModel.isSearching.collectAsState()
-                                                                        if (isSearching) {
+                        if (isSearching) {
                             Box(modifier = Modifier.fillMaxSize()) {
                                 val focusManager = LocalFocusManager.current
                                 val keyboardController = LocalSoftwareKeyboardController.current
@@ -444,25 +439,22 @@ fun MainScreen(viewModel: DownloadViewModel, searchViewModel: SearchViewModel, m
 
                                     // The input and suggestions live in this same weighted column:
                                     // its width is exactly the input width, never the exit-button width.
-                                    Column(
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .liquidGlass(
-                                                fillColor = CG.SearchBar,
-                                                washAlpha = 0.68f,
-                                                radius = 21.dp,
-                                                capsule = false,
-                                                borderColor = CG.Border10,
-                                                borderWidth = 0.8.dp,
-                                                rimLightAlpha = 0.50f,
-                                                pressFeedback = false
-                                            )
-                                            .clip(RoundedCornerShape(21.dp))
-                                    ) {
+                                    Column(modifier = Modifier.weight(1f)) {
                                         Row(
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .height(42.dp)
+                                                .liquidGlass(
+                                                    fillColor = CG.Void,
+                                                    washAlpha = 1f,
+                                                    radius = 21.dp,
+                                                    capsule = true,
+                                                    borderColor = CG.Border10,
+                                                    borderWidth = 0.8.dp,
+                                                    rimLightAlpha = 0.50f,
+                                                    pressFeedback = false
+                                                )
+                                                .clip(CircleShape)
                                                 .padding(horizontal = 16.dp),
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
@@ -535,6 +527,7 @@ fun MainScreen(viewModel: DownloadViewModel, searchViewModel: SearchViewModel, m
                                             SearchSuggestionsPanel(
                                                 suggestions = suggestionList,
                                                 loading = suggestionsLoading,
+                                                topCornerRadius = 21.dp,
                                                 onSelect = { suggestion ->
                                                     searchViewModel.performSearch(suggestion)
                                                     focusManager.clearFocus(force = true)
